@@ -4,6 +4,7 @@
 
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { fmtUsd, shortModel } from '../lib/format.js';
+import { OTHER_PROJECT } from '../lib/analytics.js';
 
 // Порядок серій: blue, teal, orange, purple, green, gray (binding, CONTRACT.md).
 // Далі — запасні відтінки (indigo, yellow) для 7-8 моделей в одному періоді:
@@ -18,19 +19,35 @@ const PINNED = [
   [/haiku/i, '#FF9500'],        // orange
 ];
 
-export function buildModelColors(models) {
+// Зведена серія «Інші» завжди сіра (CONTRACT v1.5) — і сірий не дістається
+// нікому іншому, поки вона присутня в наборі ключів.
+const OTHER_PIN = [new RegExp(`^${OTHER_PROJECT}$`), '#8E8E93'];
+
+/**
+ * Кольори довільних серій (моделі, проєкти, …) у порядку SERIES.
+ * `pinned` — [[regexp, color]] для сутностей із закріпленим кольором;
+ * закріплення спрацьовує лише для ключів, які реально є в наборі, тож
+ * невикористані кольори лишаються вільними для решти серій.
+ */
+export function buildSeriesColors(keys, pinned = []) {
+  const pins = [...pinned, OTHER_PIN];
   const map = new Map();
   const used = new Set();
-  for (const m of models) {
-    const pin = PINNED.find(([re]) => re.test(m));
-    if (pin && !used.has(pin[1])) { map.set(m, pin[1]); used.add(pin[1]); }
+  for (const k of keys) {
+    const pin = pins.find(([re]) => re.test(k));
+    if (pin && !used.has(pin[1])) { map.set(k, pin[1]); used.add(pin[1]); }
   }
   const free = SERIES.filter((c) => !used.has(c));
   let i = 0;
-  for (const m of models) {
-    if (!map.has(m)) map.set(m, free[i % free.length] || '#8E8E93'), i++;
+  for (const k of keys) {
+    if (!map.has(k)) { map.set(k, free[i % free.length] || '#8E8E93'); i++; }
   }
   return map;
+}
+
+/** Кольори моделей (сумісність: та сама поведінка, що до v1.5). */
+export function buildModelColors(models) {
+  return buildSeriesColors(models, PINNED);
 }
 
 /** Ширина YAxis горизонтального бару за найдовшим лейблом — без обрізань.
@@ -47,17 +64,31 @@ export const AXIS_TICK = { fontSize: 11, fill: '#8E8E93' };
 export const X_PROPS = { tickLine: false, axisLine: false, tick: AXIS_TICK, tickMargin: 6 };
 export const Y_PROPS = { tickLine: false, axisLine: false, tick: AXIS_TICK, width: 44 };
 
-/** Білий тултіп-картка. valueFormatter(value, name) → рядок. */
-export function ChartTooltip({ active, payload, label, labelFormatter, valueFormatter, nameFormatter }) {
+/**
+ * Білий тултіп-картка. valueFormatter(value, name) → рядок.
+ * `order` — { dataKey: ранг } для явного порядку рядків. Recharts власний
+ * `itemSorter` застосовує ЛИШЕ DefaultTooltipContent, тож кастомний content
+ * мусить сортувати сам; без `order` лишається порядок оголошення серій.
+ */
+export function ChartTooltip({
+  active, payload, label, labelFormatter, valueFormatter, nameFormatter, order,
+}) {
   if (!active || !payload || !payload.length) return null;
   const fmtV = valueFormatter || ((v) => fmtUsd(v));
   const fmtN = nameFormatter || ((n) => shortModel(n));
+  // null/undefined — серія просто не визначена в цій точці (напр. прогноз
+  // до дня-якоря): показувати «$0,00» було б брехнею.
+  let rows = payload.filter((p) => p.value != null && (p.value !== 0 || payload.length === 1));
+  if (order) {
+    const rank = (p) => order[p.dataKey] ?? order[p.name] ?? Number.MAX_SAFE_INTEGER;
+    rows = rows.slice().sort((a, b) => rank(a) - rank(b)); // Array#sort стабільний (ES2019)
+  }
   return (
     <div className="chart-tooltip">
       {label != null && (
         <div className="chart-tooltip-label">{labelFormatter ? labelFormatter(label) : label}</div>
       )}
-      {payload.filter((p) => p.value !== 0 || payload.length === 1).map((p) => (
+      {rows.map((p) => (
         <div className="chart-tooltip-row" key={p.dataKey || p.name}>
           <span className="dot" style={{ background: p.color || p.fill }} />
           <span className="chart-tooltip-name">{fmtN(p.name)}</span>
@@ -68,13 +99,17 @@ export function ChartTooltip({ active, payload, label, labelFormatter, valueForm
   );
 }
 
-/** Легенда-рядок під графіком: кольорова крапка + назва. */
+/** Легенда-рядок під графіком: кольорова крапка + назва.
+ *  `dash: true` (v1.5) — замість крапки пунктирна риска, щоб легенда збігалася
+ *  зі стилем лінії (минулий місяць / прогноз). */
 export function LegendRow({ items }) {
   return (
     <div className="legend-row">
       {items.map((it) => (
         <span className="legend-item" key={it.label}>
-          <span className="dot" style={{ background: it.color }} />
+          {it.dash
+            ? <span className="dash" style={{ color: it.color, opacity: it.faded ? 0.55 : 1 }} />
+            : <span className="dot" style={{ background: it.color }} />}
           {it.label}
         </span>
       ))}

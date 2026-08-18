@@ -220,13 +220,17 @@ function Dashboard() {
       </header>
 
       <main className="app-main">
-        {/* kpiDays/anchorDay використовує лише «Огляд» (KPI з фіксованими
-            вікнами поважають фільтр проєкту, але не період); решта вкладок
-            ці пропси ігнорує. */}
+        {/* kpiDays/anchorDay/period/project/onSelectProject використовує лише
+            «Огляд» (KPI та місячна картка поважають фільтр проєкту, але не
+            період; бари топ-проєктів клікають у глобальний фільтр) — решта
+            вкладок ці пропси ігнорує. */}
         <ActiveTab
           snapshot={filtered}
           kpiDays={projectOnly ? projectOnly.days : []}
           anchorDay={anchorDay}
+          period={period}
+          project={project}
+          onSelectProject={setProject}
         />
       </main>
 

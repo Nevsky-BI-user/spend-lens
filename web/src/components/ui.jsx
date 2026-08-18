@@ -5,11 +5,26 @@ import React, { useState } from 'react';
 import { FLAG_META } from '../lib/rules.js';
 import { fmtUsd } from '../lib/format.js';
 
-export function Card({ title, subtitle, children, className = '' }) {
-  return (
-    <section className={`card ${className}`}>
+/**
+ * Картка. `actions` (v1.5, необов’язковий) — керування праворуч від заголовка
+ * (перемикач, посилання). Без нього DOM лишається таким самим, як до v1.5:
+ * друкований шаблон покладається на селектор `.card-title + :not(.card-subtitle)`.
+ */
+export function Card({ title, subtitle, children, className = '', actions = null }) {
+  const head = (
+    <>
       {title && <h3 className="card-title">{title}</h3>}
       {subtitle && <p className="card-subtitle">{subtitle}</p>}
+    </>
+  );
+  return (
+    <section className={`card ${className}`}>
+      {actions ? (
+        <div className="card-head">
+          <div className="card-head-text">{head}</div>
+          <div className="card-actions">{actions}</div>
+        </div>
+      ) : head}
       {children}
     </section>
   );

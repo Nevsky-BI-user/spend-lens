@@ -170,6 +170,21 @@ button { font-family: inherit; }
 .card-subtitle { margin: 0 0 14px; font-size: 13px; color: var(--text-2); }
 .card-title + :not(.card-subtitle) { margin-top: 12px; }
 
+/* v1.5: шапка картки з керуванням (перемикач / посилання) праворуч.
+   Рендериться лише коли Card отримав `actions` — інакше DOM як раніше. */
+.card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+}
+
+.card-head-text { min-width: 0; flex: 1 1 220px; }
+.card-head-text .card-subtitle { margin-bottom: 0; }
+.card-actions { display: flex; align-items: center; gap: 8px; }
+
 .grid-2 {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -268,6 +283,81 @@ button { font-family: inherit; }
 }
 
 .legend-item { display: inline-flex; align-items: center; gap: 6px; }
+
+/* пунктирна риска в легенді (минулий місяць / прогноз) — v1.5 */
+.dash {
+  width: 14px;
+  height: 0;
+  border-top: 2px dashed currentColor;
+  display: inline-block;
+  flex-shrink: 0;
+}
+
+/* --------------------------------------- v1.5: топ проєктів (h-бари) ------ */
+
+.proj-bars { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+
+.proj-bar {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: none;
+  background: none;
+  padding: 8px 10px;
+  border-radius: 10px;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  transition: background .15s;
+}
+
+.proj-bar:hover { background: rgba(0, 122, 255, .06); }
+.proj-bar:focus-visible { outline: 2px solid var(--blue); outline-offset: -2px; }
+
+.proj-bar-head { display: flex; align-items: baseline; gap: 10px; }
+
+.proj-bar-name {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+
+.proj-bar-cost {
+  font-size: 13px;
+  font-weight: 700;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.proj-bar-row { display: flex; align-items: center; gap: 10px; margin-top: 6px; }
+
+.proj-bar-track {
+  flex: 1;
+  min-width: 0;
+  height: 10px;
+  border-radius: 999px;
+  background: var(--line);
+  overflow: hidden;
+}
+
+.proj-bar-fill { display: block; height: 100%; border-radius: 999px; background: var(--blue); }
+
+/* Δ-бейдж: дорожче — червоний, дешевше — зелений, новий проєкт — фіолетовий */
+.delta-chip {
+  border-radius: 999px;
+  padding: 2px 9px;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+}
+
+.delta-chip.up   { background: rgba(255, 59, 48, .12);   color: #c0281e; }
+.delta-chip.down { background: rgba(52, 199, 89, .14);   color: #1c7c3c; }
+.delta-chip.new  { background: rgba(175, 82, 222, .12);  color: #7d2fa8; }
 
 /* donut */
 .donut-wrap { position: relative; }
@@ -799,6 +889,17 @@ button { font-family: inherit; }
   .copy-btn { min-height: 44px; padding: 12px 18px; }
   .drawer-close { width: 44px; height: 44px; font-size: 15px; }
   .sessions-table th.sortable { padding-top: 14px; padding-bottom: 14px; }
+
+  /* v1.5: перемикач у шапці картки переходить під заголовок і стає на всю
+     ширину (кнопки вже отримують min-height 44px правилом вище).
+     flex-basis 220px у колонковому напрямку означав би ВИСОТУ — скидаємо,
+     інакше між підзаголовком і перемикачем зяє порожнеча. */
+  .card-head { flex-direction: column; align-items: stretch; }
+  .card-head-text { flex: 0 0 auto; }
+  .card-actions { width: 100%; }
+  .card-actions .segmented { flex: 1 1 auto; }
+
+  .proj-bar { min-height: 44px; }
 }
 
 /* --- ≤640 (телефон): дровер = повноекранний bottom sheet із липкою шапкою

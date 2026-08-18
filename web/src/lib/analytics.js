@@ -173,6 +173,184 @@ export function dailyByModel(days, { from = null, to = null } = {}) {
   return { rows, models };
 }
 
+// ------------------------------------------------ v1.5: дні × проєкти -------
+
+/** Назва зведеної серії «решта проєктів» (завжди остання, сіра). */
+export const OTHER_PROJECT = 'Інші';
+
+/**
+ * Щоденні витрати з розбивкою за ПРОЄКТАМИ (stacked bar, близнюк dailyByModel).
+ * topN найдорожчих проєктів у видимому діапазоні лишаються собою, решта
+ * зводиться в «Інші» (завжди останній елемент `projects` → верх стеку).
+ * Проєкти з нульовою сумарною вартістю не потрапляють у серії — інакше вони
+ * засмічують легенду порожніми рядками (та сама логіка, що в dailyByModel).
+ */
+export function dailyByProject(days, { topN = 6 } = {}) {
+  const totals = new Map();
+  for (const d of days) {
+    totals.set(d.project, (totals.get(d.project) || 0) + (d.costUsd || 0));
+  }
+  const ranked = [...totals.entries()]
+    .filter(([, cost]) => cost > 0)
+    .sort((a, b) => b[1] - a[1]);
+  const top = ranked.slice(0, topN).map(([p]) => p);
+  const topSet = new Set(top);
+  const restSet = new Set(ranked.slice(topN).map(([p]) => p));
+
+  const map = new Map();
+  for (const d of days) {
+    let key = null;
+    if (topSet.has(d.project)) key = d.project;
+    else if (restSet.has(d.project)) key = OTHER_PROJECT;
+    if (!key) continue; // проєкт із нульовою вартістю — не окрема серія
+    const row = map.get(d.day) || { day: d.day };
+    row[key] = (row[key] || 0) + (d.costUsd || 0);
+    map.set(d.day, row);
+  }
+  const rows = [...map.values()].sort((a, b) => (a.day < b.day ? -1 : 1));
+  const projects = restSet.size ? [...top, OTHER_PROJECT] : top;
+  return { rows, projects };
+}
+
+/** Кількість днів у місяці 'YYYY-MM'. */
+function daysInMonth(ym) {
+  const [y, m] = ym.split('-').map(Number);
+  return new Date(y, m, 0).getDate();
+}
+
+/** Попередній календарний місяць для 'YYYY-MM'. */
+function prevMonthOf(ym) {
+  const [y, m] = ym.split('-').map(Number);
+  const d = new Date(y, m - 2, 1);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+}
+
+/**
+ * Порівняння наростаючих підсумків по днях місяця (v1.5).
+ *  cur      — цей місяць, кумулятивно, до дня-якоря включно (далі null);
+ *  prev     — минулий місяць, кумулятивно, вирівняний за днем місяця;
+ *  forecast — продовження від дня-якоря до кінця місяця за run-rate
+ *             (сума за останні 7 днів / 7); null, якщо якір — останній
+ *             день свого місяця (прогнозувати нема чого).
+ * Довжина рядків = кількість днів у ЦЬОМУ місяці: вісь і тултіп підписані
+ * поточним місяцем, тож зайві дні довшого минулого (31 травня проти 30 днів
+ * червня) дали б неіснуючу дату «31 червня». Повний підсумок минулого місяця
+ * лишається доступним у `prevTotal` (рахується окремо від рядків).
+ * Гроші не округлюються — форматування лишається на format.js.
+ */
+export function cumulativeMonthCompare(days, anchorDay = null) {
+  const anchor = anchorDay || lastDay(days);
+  const empty = {
+    rows: [], forecastTotal: null, prevTotal: 0, curTotal: 0,
+    runRate: 0, month: '', monthDays: 0, anchorDom: 0,
+  };
+  if (!anchor) return empty;
+
+  const month = anchor.slice(0, 7);
+  const prevMonth = prevMonthOf(month);
+  const anchorDom = Number(anchor.slice(8, 10));
+  const lenCur = daysInMonth(month);
+  const lenPrev = daysInMonth(prevMonth);
+
+  const curDaily = new Array(lenCur + 1).fill(0);
+  const prevDaily = new Array(lenPrev + 1).fill(0);
+  for (const d of days) {
+    const ym = d.day.slice(0, 7);
+    const dom = Number(d.day.slice(8, 10));
+    if (ym === month && dom >= 1 && dom <= lenCur) curDaily[dom] += d.costUsd || 0;
+    else if (ym === prevMonth && dom >= 1 && dom <= lenPrev) prevDaily[dom] += d.costUsd || 0;
+  }
+
+  // Run-rate рахуємо по КАЛЕНДАРНОМУ вікну (7 днів назад від якоря), а не
+  // «від початку місяця»: на початку місяця середнє по 2-3 днях стрибало б.
+  const from = shiftDay(anchor, -6);
+  let last7 = 0;
+  for (const d of days) {
+    if (d.day >= from && d.day <= anchor) last7 += d.costUsd || 0;
+  }
+  const runRate = last7 / 7;
+
+  const hasForecast = anchorDom < lenCur;
+  const rows = [];
+  let accCur = 0, accPrev = 0, curTotal = 0;
+  for (let dom = 1; dom <= lenCur; dom++) {
+    accCur += curDaily[dom];
+    if (dom <= lenPrev) accPrev += prevDaily[dom];
+    if (dom === anchorDom) curTotal = accCur;
+    rows.push({
+      dom,
+      cur: dom <= anchorDom ? accCur : null,
+      // Коротший минулий місяць (лютий проти березня) просто обривається.
+      prev: dom <= lenPrev ? accPrev : null,
+      forecast: null,
+    });
+  }
+  if (hasForecast) {
+    // Прогноз стартує в точці якоря — інакше пунктир «висів» би в повітрі.
+    for (let dom = anchorDom; dom <= lenCur; dom++) {
+      rows[dom - 1].forecast = curTotal + runRate * (dom - anchorDom);
+    }
+  }
+
+  return {
+    rows,
+    forecastTotal: hasForecast ? curTotal + runRate * (lenCur - anchorDom) : null,
+    // Повний минулий місяць — незалежно від того, чи вліз він у рядки.
+    prevTotal: prevDaily.reduce((a, x) => a + x, 0),
+    curTotal,
+    runRate,
+    month,
+    monthDays: lenCur,
+    anchorDom,
+  };
+}
+
+/**
+ * Топ проєктів за період + Δ проти попереднього вікна такої ж довжини (v1.5).
+ *  daysFiltered — дні, вже обрізані глобальним фільтром (період + проєкт);
+ *  daysAll      — ті самі дні БЕЗ фільтра періоду (потрібні для минулого вікна);
+ *  period       — довжина вікна в днях; 0 («увесь час») → порівняння немає.
+ * Повертає [{ project, costUsd, prevUsd, deltaPct, isNew }], вартість ↓.
+ */
+export function projectsWithDelta(
+  daysFiltered,
+  daysAll,
+  { period = 0, anchorDay = null, topN = 8 } = {}
+) {
+  const anchor = anchorDay || lastDay(daysAll && daysAll.length ? daysAll : daysFiltered || []);
+  const cur = new Map();
+  for (const d of daysFiltered || []) {
+    cur.set(d.project, (cur.get(d.project) || 0) + (d.costUsd || 0));
+  }
+  const ranked = [...cur.entries()]
+    .filter(([, cost]) => cost > 0)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, topN);
+
+  // Попереднє вікно тієї ж довжини, впритул перед поточним (як у computeKpis).
+  let prev = null;
+  if (period > 0 && anchor) {
+    const prevTo = shiftDay(anchor, -period);
+    const prevFrom = shiftDay(anchor, -(period * 2 - 1));
+    prev = new Map();
+    for (const d of daysAll || []) {
+      if (d.day < prevFrom || d.day > prevTo) continue;
+      prev.set(d.project, (prev.get(d.project) || 0) + (d.costUsd || 0));
+    }
+  }
+
+  return ranked.map(([project, costUsd]) => {
+    const prevUsd = prev ? (prev.get(project) || 0) : null;
+    return {
+      project,
+      costUsd,
+      prevUsd,
+      deltaPct: prevUsd > 0 ? ((costUsd - prevUsd) / prevUsd) * 100 : null,
+      isNew: prev != null && prevUsd === 0,
+    };
+  });
+}
+
 /** Кумулятивна вартість поточного місяця (місяць останнього дня). */
 export function cumulativeMonth(days) {
   const today = lastDay(days);
