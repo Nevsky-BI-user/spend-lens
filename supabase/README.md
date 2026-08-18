@@ -22,7 +22,7 @@ Supabase зберігає агрегати витрат (`usage_days`, `sessions
 
 1. У лівому меню панелі Supabase відкрийте **SQL Editor**.
 2. Натисніть **New query**.
-3. Скопіюйте повний вміст файлу `supabase/migrations/001_init.sql` з цього репозиторію і вставте в редактор.
+3. Скопіюйте повний вміст файлу [migrations/001_init.sql](migrations/001_init.sql) (лежить поруч із цим README; з кореня репозиторію — `supabase/migrations/001_init.sql`) і вставте в редактор. На Windows найшвидше: `clip < supabase/migrations/001_init.sql` з кореня репозиторію — вміст одразу в буфері обміну.
 4. Натисніть **Run** (або `Ctrl+Enter`).
 5. Перевірка: у розділі **Table Editor** мають з'явитися чотири таблиці — `usage_days`, `sessions_agg`, `meta`, `allowed_users`. У таблиці `allowed_users` вже має бути один рядок: `gotnewmess@gmail.com`.
 
