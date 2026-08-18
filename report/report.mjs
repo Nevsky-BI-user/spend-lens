@@ -1,11 +1,17 @@
-// spend-lens v1.2 — email PDF digests.
+// spend-lens v1.2/v1.3 — email PDF digests.
 // CLI: node report/report.mjs --type daily|monthly|yearly [--date YYYY-MM-DD] [--no-send] [--out <dir>]
 //
 // Якір «сьогодні» = --date або поточна дата в Europe/Kyiv (через Intl, НЕ локальний час сервера).
-//   daily   → цей день; monthly → попередній календарний місяць якоря;
+//   daily   → ПОПЕРЕДНІЙ київський день якоря (звіт о 08:00 за добу, що завершилась;
+//             --date 2026-08-18 → звіт за 2026-08-17; тема/тіло листа йдуть за періодом);
+//   monthly → попередній календарний місяць якоря;
 //   yearly  → попередній календарний рік якоря.
 // Читає web/public/data/usage.json і повторно використовує чисті ESM-бібліотеки вебзастосунку
 // (web/src/lib/analytics.js, rules.js, format.js) — без збирання.
+//
+// Рендер PDF (v1.3 «PDF = справжній сайт»): якщо є збірка web/dist/index.html —
+// друкуємо СПРАВЖНІЙ сайт через pdf.mjs::printSite (?print=<type>&date=...);
+// якщо збірки немає — гучний лог і запасний шлях v1.2 (render.mjs + svg.mjs).
 
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import path from 'node:path';
@@ -23,7 +29,7 @@ import {
   renderReport, card, warnBox, kpiRow, sessionsTable, recCards,
   fmtDeltaPct, fmtTokensG,
 } from './render.mjs';
-import { htmlToPdf } from './pdf.mjs';
+import { htmlToPdf, printSite } from './pdf.mjs';
 import { sendReport } from './mailer.mjs';
 
 const KYIV = 'Europe/Kyiv';
@@ -86,17 +92,23 @@ function kyivNowLabel() {
 
 /**
  * Період звіту за типом і якорем.
- * daily → сам якір; monthly → попередній календарний місяць; yearly → попередній рік.
+ * daily → ПОПЕРЕДНІЙ київський день якоря (v1.2 UPDATED: звіт о 08:00 за добу,
+ * що завершилась); monthly → попередній календарний місяць; yearly → попередній рік.
+ * printDate — значення параметра date для друкованого режиму сайту (?print=...):
+ * для daily це ВЖЕ ЗСУНУТИЙ день (PrintReport покриває рівно його), для
+ * monthly/yearly — якір (PrintReport сам виводить попередній місяць/рік).
  */
 function computePeriod(type, anchor) {
   const [ay, am] = anchor.split('-').map(Number);
 
   if (type === 'daily') {
+    const day = shiftDay(anchor, -1); // доба, що завершилась
     return {
-      from: anchor, to: anchor,
-      prevFrom: shiftDay(anchor, -1), prevTo: shiftDay(anchor, -1),
-      label: fmtDayGen(anchor), prevName: 'попереднього дня',
-      fileTag: anchor,
+      from: day, to: day,
+      prevFrom: shiftDay(day, -1), prevTo: shiftDay(day, -1),
+      label: fmtDayGen(day), prevName: 'попереднього дня',
+      fileTag: day,
+      printDate: day,
     };
   }
 
@@ -110,6 +122,7 @@ function computePeriod(type, anchor) {
       prevFrom: `${py}-${pad2(pm)}-01`, prevTo: `${py}-${pad2(pm)}-${pad2(lastDateOfMonth(py, pm))}`,
       label: `${MONTHS_NOM[m - 1]} ${y}`, prevName: 'попереднього місяця',
       fileTag: `${y}-${pad2(m)}`, year: y, month: m,
+      printDate: anchor,
     };
   }
 
@@ -120,6 +133,7 @@ function computePeriod(type, anchor) {
     prevFrom: `${y - 1}-01-01`, prevTo: `${y - 1}-12-31`,
     label: `${y} рік`, prevName: 'попереднього року',
     fileTag: String(y), year: y,
+    printDate: anchor,
   };
 }
 
@@ -430,32 +444,47 @@ async function main() {
   const anchor = args.date || kyivDay();
   const period = computePeriod(args.type, anchor);
 
-  const builders = { daily: buildDaily, monthly: buildMonthly, yearly: buildYearly };
-  const { body, totals, filtered } = builders[args.type](snapshot, period);
+  // Підсумки періоду для теми/тіла листа — незалежно від способу рендеру PDF.
+  const filtered = filterRange(snapshot, period.from, period.to);
+  const totals = sumDays(filtered.days);
   const prevTotals = sumDays(filterRange(snapshot, period.prevFrom, period.prevTo).days);
-
-  const html = renderReport({
-    periodLabel: period.label,
-    generatedAtLabel: kyivNowLabel(),
-    bodyHtml: body,
-  });
 
   const outDir = args.out ? path.resolve(process.cwd(), args.out) : path.join(__dirname, 'out');
   mkdirSync(outDir, { recursive: true });
   const baseName = `spend-lens-${args.type}-${period.fileTag}`;
   const htmlPath = path.join(outDir, `${baseName}.html`);
   const pdfPath = path.join(outDir, `${baseName}.pdf`);
-  writeFileSync(htmlPath, html, 'utf8');
 
   console.log(`[report] тип: ${args.type} · період: ${period.label} (${period.from}..${period.to}) · якір: ${anchor}`);
   console.log(`[report] витрати за період: ${fmtUsd(totals.cost)} · сесій: ${filtered.sessions.length}`);
 
+  // v1.3: PDF = справжній сайт (web/dist через ефемерний статик-сервер).
+  // Немає збірки → ГУЧНИЙ лог + запасний шлях v1.2 (render.mjs + svg.mjs).
+  const distDir = path.join(repoRoot, 'web', 'dist');
+  const dataDir = path.join(repoRoot, 'web', 'public', 'data');
+  const haveDist = existsSync(path.join(distDir, 'index.html'));
+
   let printed;
   try {
-    printed = htmlToPdf(htmlPath, pdfPath);
+    if (haveDist) {
+      const urlPath = `/spend-lens/?print=${args.type}&date=${period.printDate}`;
+      console.log(`[report] друк сайту (v1.3): ${urlPath}`);
+      printed = await printSite({ distDir, dataDir, urlPath, outPdf: pdfPath });
+    } else {
+      console.error('[report] !!! УВАГА: немає збірки сайту web/dist/index.html — PDF буде надруковано ЗАСТАРІЛИМ шляхом v1.2 (render.mjs+svg.mjs), він візуально НЕ збігається з дашбордом. Запусти: npm --prefix web run build');
+      const builders = { daily: buildDaily, monthly: buildMonthly, yearly: buildYearly };
+      const { body } = builders[args.type](snapshot, period);
+      const html = renderReport({
+        periodLabel: period.label,
+        generatedAtLabel: kyivNowLabel(),
+        bodyHtml: body,
+      });
+      writeFileSync(htmlPath, html, 'utf8');
+      printed = htmlToPdf(htmlPath, pdfPath);
+    }
   } catch (err) {
     console.error(`[report] ПОМИЛКА друку PDF: ${err.message}`);
-    console.error(`[report] HTML залишено для діагностики: ${htmlPath}`);
+    if (!haveDist) console.error(`[report] HTML залишено для діагностики: ${htmlPath}`);
     process.exit(1);
   }
   console.log(`[report] PDF: ${pdfPath} (${Math.round(printed.sizeBytes / 1024)} КБ, ${printed.name})`);

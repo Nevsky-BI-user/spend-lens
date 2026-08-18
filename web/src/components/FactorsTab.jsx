@@ -1,55 +1,62 @@
 // Вкладка «Фактори»: Pareto «Де живе перевитрата» + картки факторів
 // із топ-3 доказами та поясненням «чому це відбувається».
+// v1.4: на телефоні лейбли Pareto переносяться на кілька рядків (useHBarAxis),
+// без обрізань на 375px.
 
 import React, { useMemo } from 'react';
 import {
   ResponsiveContainer, BarChart, Bar, Cell, XAxis, YAxis, Tooltip, LabelList,
 } from 'recharts';
 import { computeFactors } from '../lib/analytics.js';
-import { fmtUsd } from '../lib/format.js';
+import { fmtUsd, fmtUsdCompact } from '../lib/format.js';
 import { FLAG_META } from '../lib/rules.js';
 import { Card, EmptyState } from './ui.jsx';
-import { ChartTooltip, yAxisWidth } from './charts.jsx';
+import { ChartTooltip, useHBarAxis, useMediaQuery, PHONE_MEDIA } from './charts.jsx';
 
 export default function FactorsTab({ snapshot }) {
+  const isPhone = useMediaQuery(PHONE_MEDIA);
   const factors = useMemo(() => computeFactors(snapshot), [snapshot]);
   const nonZero = factors.filter((f) => f.totalUsd > 0.005);
-
-  if (!nonZero.length) {
-    return <EmptyState text="Перевитрат не виявлено — усі сесії в межах здорових порогів." />;
-  }
 
   const chartData = nonZero.map((f) => ({
     ...f,
     label: FLAG_META[f.type]?.labelAgg || FLAG_META[f.type]?.label || f.type,
   }));
+  const axis = useHBarAxis(chartData.map((f) => f.label), isPhone, 44);
+  const barLabelFmt = isPhone ? fmtUsdCompact : fmtUsd;
+
+  if (!nonZero.length) {
+    return <EmptyState text="Перевитрат не виявлено — усі сесії в межах здорових порогів." />;
+  }
 
   return (
     <>
       <Card title="Де живе перевитрата" subtitle="Оцінка втрат за факторами, USD">
-        <ResponsiveContainer width="100%" height={Math.max(160, chartData.length * 44)}>
-          <BarChart data={chartData} layout="vertical" margin={{ top: 4, right: 72, left: 8, bottom: 4 }}>
-            <XAxis type="number" hide />
-            <YAxis
-              type="category"
-              dataKey="label"
-              tickLine={false}
-              axisLine={false}
-              width={yAxisWidth(chartData.map((f) => f.label))}
-              tick={{ fontSize: 12, fill: '#1C1C1E' }}
-            />
-            <Tooltip
-              cursor={{ fill: 'rgba(0,0,0,0.04)' }}
-              content={<ChartTooltip nameFormatter={() => 'оцінка втрат'} />}
-            />
-            <Bar dataKey="totalUsd" barSize={22} radius={[0, 6, 6, 0]}>
-              {chartData.map((f) => (
-                <Cell key={f.type} fill={FLAG_META[f.type]?.color || '#8E8E93'} />
-              ))}
-              <LabelList dataKey="totalUsd" position="right" formatter={fmtUsd} style={{ fontSize: 12, fill: '#1C1C1E' }} />
-            </Bar>
-          </BarChart>
-        </ResponsiveContainer>
+        <div ref={axis.ref}>
+          <ResponsiveContainer width="100%" height={Math.max(160, chartData.length * axis.rowHeight)}>
+            <BarChart data={chartData} layout="vertical" margin={{ top: 4, right: isPhone ? 52 : 72, left: isPhone ? 0 : 8, bottom: 4 }}>
+              <XAxis type="number" hide />
+              <YAxis
+                type="category"
+                dataKey="label"
+                tickLine={false}
+                axisLine={false}
+                width={axis.yWidth}
+                tick={axis.tick}
+              />
+              <Tooltip
+                cursor={{ fill: 'rgba(0,0,0,0.04)' }}
+                content={<ChartTooltip nameFormatter={() => 'оцінка втрат'} />}
+              />
+              <Bar dataKey="totalUsd" barSize={22} radius={[0, 6, 6, 0]}>
+                {chartData.map((f) => (
+                  <Cell key={f.type} fill={FLAG_META[f.type]?.color || '#8E8E93'} />
+                ))}
+                <LabelList dataKey="totalUsd" position="right" formatter={barLabelFmt} style={{ fontSize: isPhone ? 11 : 12, fill: '#1C1C1E' }} />
+              </Bar>
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
       </Card>
 
       <div className="factor-grid">

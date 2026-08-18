@@ -1,0 +1,112 @@
+/* Друкований режим (?print=...) — v1.3 «PDF = справжній сайт».
+   A4 portrait, поля @page 10mm, контейнер фіксованої ширини 766px,
+   біле тло сторінки, картки не розриваються між сторінками,
+   пастельні чіпи та графіки зберігають колір (print-color-adjust: exact).
+   Селектори специфічніші за styles.css (.print-report .card тощо),
+   тож порядок імпорту в бандлі значення не має. */
+
+@page {
+  size: A4 portrait;
+  margin: 10mm;
+}
+
+body.print-mode {
+  background: #FFFFFF;
+}
+
+/* styles.css фарбує і html у --bg (#F2F2F7): без цього правила полотно html
+   проступає сірою смугою внизу останньої сторінки PDF — там, де body
+   закінчується раніше за фізичний аркуш. :has підтримується Chromium 105+
+   (headless-пайплайн) і всіма сучасними браузерами. */
+html:has(body.print-mode) {
+  background: #FFFFFF;
+}
+
+.print-report {
+  width: 766px;
+  margin: 0 auto;
+  padding: 4px 0 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  print-color-adjust: exact;
+  -webkit-print-color-adjust: exact;
+}
+
+.print-report * {
+  print-color-adjust: exact;
+  -webkit-print-color-adjust: exact;
+}
+
+/* Картки: як на сайті, але з тонкою рамкою (тіні друкуються погано)
+   і забороною розриву між сторінками. */
+.print-report .card {
+  break-inside: avoid;
+  box-shadow: none;
+  border: 1px solid var(--line);
+}
+
+/* Шапка та підвал звіту */
+.print-header h1 {
+  margin: 0;
+  font-size: 24px;
+  font-weight: 700;
+  letter-spacing: -0.4px;
+}
+
+.print-header .print-sub {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: var(--text-2);
+}
+
+.print-footer {
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--text-2);
+  text-align: center;
+}
+
+/* KPI: 3 колонки під ширину 766px (на сайті — 4 під 1180px) */
+.print-report .kpi-grid {
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+}
+
+.print-report .kpi-value {
+  font-size: 22px;
+  overflow-wrap: anywhere;
+}
+
+/* Таблиця сесій: без мінімальної ширини сайту, компактніший шрифт */
+.print-report .sessions-table {
+  min-width: 0;
+  font-size: 12px;
+}
+
+.print-report .sessions-table th {
+  position: static; /* sticky у друку не потрібен */
+}
+
+.print-report .sessions-table tbody tr {
+  cursor: default;
+}
+
+.print-report .cell-title {
+  max-width: 320px;
+}
+
+/* Попередження про порожній період */
+.print-report .warn-banner {
+  margin-top: 0;
+}
+
+/* Картки рекомендацій без кнопок копіювання — лише текст промпта */
+.print-report .prompt-box p {
+  margin: 0;
+}
+
+/* Маркер готовності даних: невидимий, PDF-пайплайн перевіряє його перед друком */
+#print-ready {
+  display: none;
+}

@@ -152,7 +152,7 @@ RLS: enable on all; SELECT for authenticated where `auth.jwt()->>'email' in (sel
 
 `report/` module, zero UI — a print-optimized HTML → PDF pipeline + SMTP send. Runs locally on schedule.
 
-**CLI**: `node report/report.mjs --type daily|monthly|yearly [--date YYYY-MM-DD] [--no-send] [--out <dir>]`. Anchor «сьогодні» = `--date` or current Kyiv date. daily → that day; monthly → previous calendar month of anchor; yearly → previous calendar year. Reads `web/public/data/usage.json`; REUSES pure libs via import: `web/src/lib/analytics.js`, `rules.js`, `format.js` (they are plain ESM — no build needed).
+**CLI**: `node report/report.mjs --type daily|monthly|yearly [--date YYYY-MM-DD] [--no-send] [--out <dir>]`. Anchor «сьогодні» = `--date` or current Kyiv date. daily → **the PREVIOUS Kyiv day of the anchor** (звіт о 08:00 за добу, що завершилась; `--date 2026-08-18` → звіт за 2026-08-17); monthly → previous calendar month of anchor; yearly → previous calendar year. Reads `web/public/data/usage.json`; REUSES pure libs via import: `web/src/lib/analytics.js`, `rules.js`, `format.js` (they are plain ESM — no build needed).
 
 **Files**: `report/report.mjs` (orchestrator), `render.mjs` (HTML template, all CSS inline, UA copy), `svg.mjs` (hand-rolled inline-SVG charts: h-bar, stacked daily bars, donut; NO chart libs), `pdf.mjs` (find chrome.exe else msedge.exe → `--headless=new --print-to-pdf`), `mailer.mjs` (nodemailer, smtp.gmail.com:465; env `SMTP_USER`, `SMTP_APP_PASSWORD`, `REPORT_TO`; env missing → log «email пропущено», still write PDF, exit 0), `package.json` (dep: nodemailer only), `.env.example` (placeholders only). PDFs → `report/out/` (gitignored). `report/.env` gitignored (root catch-all `.env*` + add `report/out/`).
 
@@ -162,7 +162,25 @@ RLS: enable on all; SELECT for authenticated where `auth.jwt()->>'email' in (sel
 
 **Email**: subject `spend-lens: зведення за {період} — {сума $}`; plaintext body = 3-5 рядків підсумку; PDF attached (`spend-lens-{type}-{date}.pdf`).
 
-**Schedule**: `scripts/run-report.ps1` (PS 5.1): collector collect (push) → report daily; if day==1 also monthly; if Jan 1 also yearly; log `collector/.cache/report-run.log`. `scripts/register-report-task.ps1`: schtasks "spend-lens-report" daily 21:00.
+**Schedule**: `scripts/run-report.ps1` (PS 5.1): collector collect (push) → report daily (за попередню добу); if day==1 also monthly; if Jan 1 also yearly; log `collector/.cache/report-run.log`. `scripts/register-report-task.ps1`: schtasks "spend-lens-report" daily **08:00**.
+
+## v1.3 PDF = the real site (binding; supersedes svg.mjs rendering)
+
+Goal: the PDF must be visually identical to the dashboard — same React components, Recharts charts, cards, chips, styles — not a parallel hand-drawn template.
+
+**Web print mode**: `web/src/print/PrintReport.jsx` (+`print.css`). App.jsx checks `new URLSearchParams(location.search)` BEFORE hash routing: `?print=daily|monthly|yearly&date=YYYY-MM-DD` → render `<PrintReport type date />` instead of the app (no auth, no toolbar; data ALWAYS from local `data/usage.json` fetch — print mode ignores Supabase build mode; fetch fail → visible error text). Layout per report type mirrors v1.2 content (KPI row, cost-by-project h-bar, model donut, daily/monthly stacked bars, top sessions table with flag chips, recommendation cards) but built from the SAME components: `charts.jsx`, `ui.jsx`, `analytics.js`, `format.js`, styles.css tokens. Recharts in print: fixed-size containers (no ResponsiveContainer measuring races), `isAnimationActive={false}` everywhere. Print CSS: container width 766px, `@page` A4 margin 10mm, `print-color-adjust: exact` + `-webkit-print-color-adjust: exact` (pastel chips/charts must keep color), `.card { break-inside: avoid }`, white page bg. A `#print-ready` marker element is rendered only after data load completes (print waits on it).
+
+**Pipeline (`report/`)**: `pdf.mjs` gains `printSite({distDir, dataDir, urlPath, outPdf})` — ephemeral-port `node:http` static server: `/spend-lens/data/*` → `web/public/data/*` (fresh snapshot wins), `/spend-lens/*` → `web/dist/*` (correct MIME for html/js/css/json/svg); Chrome/Edge `--headless=new --print-to-pdf=<abs> --virtual-time-budget=20000 --no-pdf-header-footer` on `http://127.0.0.1:<port>/spend-lens/?print=<type>&date=<anchor>`; server closes after print; stale-PDF guard (rmSync before, status check, size floor) stays. `report.mjs`: computes anchor + email summary as before; renders via printSite; if `web/dist/index.html` missing → fall back to legacy `render.mjs`+`svg.mjs` path with a loud log line (legacy files stay in repo). `scripts/run-report.ps1` adds `npm --prefix <repo>\web run build` before reporting (keeps dist in sync with src; ~3s).
+
+## v1.4 Responsive / mobile (binding)
+
+The dashboard must be fully usable at 375×812 (phone), 768×1024 (tablet), and desktop. All responsive rules go in `@media screen and (max-width: …)` blocks — NEVER bare `@media (max-width)` — so the print pipeline (fixed 766px, print media) is untouched. Do not modify `web/src/print/**`.
+
+- **≤768px**: filter toolbar wraps to its own full-width row under the tabs; KPI grid 4→2 columns; every `.grid-2` collapses to one column; chart heights may shrink ~15%; touch targets ≥44px.
+- **≤640px (phone)**: sessions table becomes a card list (назва, проєкт, дата, $, чіпи; tap → drawer), the drawer becomes a full-screen bottom sheet with a ≥44px close button; KPI grid 2 columns; donut and legends stack vertically.
+- **Horizontal-bar charts on phone**: category labels must remain fully readable at 375px WITHOUT truncation — cap the y-axis width at ~45% of the container and wrap long names onto two lines (custom tick), or move labels above bars. No clipped text.
+- **No page-level horizontal scroll at any width** (tables/charts scroll inside their own containers). `index.html` must have a proper viewport meta.
+- Verification: JS-measured `document.documentElement.scrollWidth <= innerWidth` at 375/768/1280, plus overflow checks on every tab.
 
 ## Privacy (public repo!)
 

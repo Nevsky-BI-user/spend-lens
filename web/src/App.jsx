@@ -13,6 +13,7 @@ import SessionsTab from './components/SessionsTab.jsx';
 import FactorsTab from './components/FactorsTab.jsx';
 import ActionsTab from './components/ActionsTab.jsx';
 import LoginCard from './components/LoginCard.jsx';
+import PrintReport from './print/PrintReport.jsx';
 import { Segmented, ProjectSelect } from './components/ui.jsx';
 
 const TABS = [
@@ -44,7 +45,22 @@ function useHashTab() {
   return [tab, go];
 }
 
+/**
+ * Друкований режим v1.3 (?print=daily|monthly|yearly&date=YYYY-MM-DD) —
+ * перевіряється ДО hash-навігації та авторизації: PDF-пайплайн (report/)
+ * рендерить сайт без Supabase, тулбарів і вкладок. location.search
+ * незмінний протягом життя сторінки, тож раннє повернення стабільне.
+ */
 export default function App() {
+  const params = new URLSearchParams(window.location.search);
+  const printType = params.get('print');
+  if (printType === 'daily' || printType === 'monthly' || printType === 'yearly') {
+    return <PrintReport type={printType} date={params.get('date') || ''} />;
+  }
+  return <Dashboard />;
+}
+
+function Dashboard() {
   const [mode] = useState(resolveMode);
   const [state, setState] = useState({ status: 'loading' });
   const [tab, go] = useHashTab();

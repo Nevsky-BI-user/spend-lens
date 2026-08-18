@@ -1,7 +1,8 @@
 # register-report-task.ps1
 # Registers a daily Windows Task Scheduler job "spend-lens-report" that runs
-# run-report.ps1 every day at 21:00 (local time): collector + daily PDF digest,
-# monthly digest on the 1st, yearly digest on January 1st.
+# run-report.ps1 every day at 08:00 (local time): collector + web build + daily
+# PDF digest for the PREVIOUS Kyiv day, monthly digest on the 1st, yearly digest
+# on January 1st.
 # Compatible with Windows PowerShell 5.1 (no &&, no ternary operators).
 #
 # Usage:
@@ -12,7 +13,7 @@
 #   schtasks /Delete /TN "spend-lens-report" /F
 
 param(
-    [string]$Time = "21:00"
+    [string]$Time = "08:00"
 )
 
 $ErrorActionPreference = "Stop"

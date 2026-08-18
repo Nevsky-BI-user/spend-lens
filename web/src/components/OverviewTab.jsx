@@ -9,7 +9,9 @@ import {
 import { computeKpis, dailyByModel, cumulativeMonth, lastDay } from '../lib/analytics.js';
 import { fmtUsd, fmtUsdCompact, fmtDayShort, fmtPct, shortModel } from '../lib/format.js';
 import { Card } from './ui.jsx';
-import { GRID, X_PROPS, Y_PROPS, ChartTooltip, LegendRow, buildModelColors } from './charts.jsx';
+import {
+  GRID, X_PROPS, Y_PROPS, ChartTooltip, LegendRow, buildModelColors, useChartHeight,
+} from './charts.jsx';
 
 function KpiCards({ days, anchorDay }) {
   const kpis = useMemo(() => computeKpis(days, anchorDay), [days, anchorDay]);
@@ -38,6 +40,7 @@ function KpiCards({ days, anchorDay }) {
 // anchorDay — останній день повного снапшота («сьогодні»).
 export default function OverviewTab({ snapshot, kpiDays, anchorDay }) {
   const days = snapshot.days || [];
+  const h = useChartHeight(); // v1.4: ≤768px висоти графіків −15%
   const { rows, models } = useMemo(() => dailyByModel(days), [days]);
   const colors = useMemo(() => buildModelColors(models), [models]);
   const cum = useMemo(() => cumulativeMonth(days), [days]);
@@ -54,7 +57,7 @@ export default function OverviewTab({ snapshot, kpiDays, anchorDay }) {
       <KpiCards days={kpiDays || days} anchorDay={anchorDay} />
 
       <Card title="Витрати за днями" subtitle="Вартість за моделями за вибраний період">
-        <ResponsiveContainer width="100%" height={280}>
+        <ResponsiveContainer width="100%" height={h(280)}>
           <BarChart data={rows} barCategoryGap="28%" margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
             <CartesianGrid {...GRID} />
             <XAxis dataKey="day" {...X_PROPS} tickFormatter={fmtDayShort} minTickGap={28} />
@@ -81,7 +84,7 @@ export default function OverviewTab({ snapshot, kpiDays, anchorDay }) {
       </Card>
 
       <Card title={`Наростаючий підсумок — ${monthLabel}`} subtitle="Кумулятивна вартість поточного місяця">
-        <ResponsiveContainer width="100%" height={240}>
+        <ResponsiveContainer width="100%" height={h(240)}>
           <LineChart data={cum} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
             <CartesianGrid {...GRID} />
             <XAxis dataKey="day" {...X_PROPS} tickFormatter={fmtDayShort} minTickGap={28} />

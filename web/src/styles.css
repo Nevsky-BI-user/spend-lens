@@ -176,7 +176,9 @@ button { font-family: inherit; }
   gap: 16px;
 }
 
-@media (max-width: 860px) {
+/* screen and — обов'язково (CONTRACT v1.4): гола (max-width) спрацювала б
+   і в print-медіа (A4 ≈ 794px) і поламала б PDF-розкладку. */
+@media screen and (max-width: 860px) {
   .grid-2 { grid-template-columns: 1fr; }
 }
 
@@ -188,7 +190,7 @@ button { font-family: inherit; }
   gap: 16px;
 }
 
-@media (max-width: 860px) {
+@media screen and (max-width: 860px) {
   .kpi-grid { grid-template-columns: repeat(2, 1fr); }
 }
 
@@ -466,7 +468,7 @@ button { font-family: inherit; }
   gap: 16px;
 }
 
-@media (max-width: 860px) {
+@media screen and (max-width: 860px) {
   .factor-grid { grid-template-columns: 1fr; }
 }
 
@@ -732,3 +734,114 @@ button { font-family: inherit; }
 .denied-card { text-align: center; padding: 32px 28px; max-width: 420px; }
 .denied-card h2 { margin: 0 0 8px; font-size: 18px; color: var(--text); }
 .denied-card .btn-secondary { margin-top: 18px; }
+
+/* ======================================================= v1.4 responsive ---
+   ЛИШЕ @media screen (binding, CONTRACT v1.4): друкований пайплайн
+   (print-медіа, фіксовані 766px) цих правил не бачить. web/src/print/** —
+   заморожена смуга, тут її нічого не зачіпає. */
+
+@media screen {
+  /* Recharts у грід-колонках: без min-width:0 вміст (svg) не дає сітці
+     стискатись і сторінка отримує горизонтальний скрол. */
+  .grid-2 > *,
+  .kpi-grid > *,
+  .factor-grid > *,
+  .metric-grid > div { min-width: 0; }
+
+  /* Довгі назви сесій / шляхи без пробілів не розтягують сторінку. */
+  .cell-title,
+  .drawer-head h3,
+  .prompt-box p,
+  .action-title,
+  .session-card-title,
+  .user-box { overflow-wrap: anywhere; }
+
+  /* Мікс моделей у дровері: 5 колонок скроляться всередині обгортки. */
+  .mix-scroll { overflow-x: auto; border-radius: 12px; }
+  .mix-scroll .mix-table { min-width: 400px; }
+
+  /* Телефонний список сесій (JSX рендерить його лише на ≤640). */
+  .session-cards { display: flex; flex-direction: column; gap: 10px; }
+  .session-card { padding: 14px 16px; cursor: pointer; }
+  .session-card:active { background: rgba(0, 122, 255, .06); }
+  .session-card-top {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 10px;
+  }
+  .session-card-title { font-weight: 600; font-size: 14px; line-height: 1.35; }
+  .session-card-cost {
+    font-weight: 700;
+    font-size: 15px;
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+  }
+  .session-card-meta { color: var(--text-2); font-size: 12px; margin-top: 4px; }
+  .session-card .chip-row { margin-top: 8px; }
+}
+
+/* --- ≤768 (планшет): тулбар окремим повнорядковим блоком під вкладками,
+       KPI 2 колонки (дублює 860 для ясності), цілі дотику ≥44px. --- */
+@media screen and (max-width: 768px) {
+  .tabs-row { flex-direction: column; align-items: stretch; }
+  .tabs { width: 100%; }
+  .tabs button { flex: 1 1 auto; min-height: 44px; padding: 10px 10px; }
+
+  .filter-toolbar { width: 100%; }
+  .filter-toolbar .segmented { flex: 1 1 auto; }
+  .segmented button { flex: 1 1 auto; min-height: 44px; padding: 10px 12px; }
+  .project-select-wrap { flex: 1 1 100%; }
+  .project-select { width: 100%; max-width: none; min-height: 44px; }
+
+  .kpi-grid { grid-template-columns: repeat(2, 1fr); }
+
+  .copy-btn { min-height: 44px; padding: 12px 18px; }
+  .drawer-close { width: 44px; height: 44px; font-size: 15px; }
+  .sessions-table th.sortable { padding-top: 14px; padding-bottom: 14px; }
+}
+
+/* --- ≤640 (телефон): дровер = повноекранний bottom sheet із липкою шапкою
+       (кнопка «Закрити» 44px завжди видима), вертикальна легенда доната. --- */
+@media screen and (max-width: 640px) {
+  .kpi-value { font-size: 22px; }
+
+  .drawer {
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    width: 100%;
+    border-radius: 0;
+    padding: 0 16px 32px;
+    box-shadow: none;
+    animation: drawer-up .28s cubic-bezier(.32, .72, .33, 1);
+  }
+
+  /* Шапка липне вгорі скрол-контейнера дровера (граблі «sticky в overflow»
+     тут не діють: .drawer і є вертикальний скрол-контейнер). */
+  .drawer-head {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    background: var(--bg);
+    padding: 14px 0 10px;
+    margin-bottom: 10px;
+  }
+
+  /* Донат: легенда вертикальним списком (CONTRACT v1.4). */
+  .donut-wrap + .legend-row {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+  }
+}
+
+@keyframes drawer-up {
+  from { transform: translateY(100%); }
+  to { transform: translateY(0); }
+}
+
+@media screen and (prefers-reduced-motion: reduce) {
+  .drawer { animation: none; }
+}

@@ -1,6 +1,8 @@
 // Вкладка «Сесії»: таблиця із сортованими колонками (типово $ ↓),
 // клік по рядку → дровер із міксом моделей, метриками, прапорцями
-// та рекомендаціями сесії.
+// та рекомендаціями сесії. На телефоні (≤640, CONTRACT v1.4) замість таблиці —
+// список карток (назва, проєкт, дата, $, чіпи), а дровер стає повноекранним
+// bottom sheet (стилі в styles.css під @media screen).
 
 import React, { useEffect, useMemo, useState } from 'react';
 import { analyzeSessions, sessionRecommendations } from '../lib/analytics.js';
@@ -9,10 +11,14 @@ import {
 } from '../lib/format.js';
 import { FLAG_META } from '../lib/rules.js';
 import { Card, FlagChip, CopyButton, EmptyState } from './ui.jsx';
+import { useMediaQuery, PHONE_MEDIA } from './charts.jsx';
 
 function ModelMix({ models }) {
   const rows = Object.entries(models || {}).sort((a, b) => (b[1].costUsd || 0) - (a[1].costUsd || 0));
+  // v1.4: на 375px 5 колонок не влазять — таблиця скролиться всередині
+  // власної обгортки, а не розтягує дровер (стиль .mix-scroll у styles.css).
   return (
+    <div className="mix-scroll">
     <table className="mix-table">
       <thead>
         <tr><th>Модель</th><th>Вхід</th><th>Вихід</th><th>Кеш-читання</th><th>$</th></tr>
@@ -29,6 +35,7 @@ function ModelMix({ models }) {
         ))}
       </tbody>
     </table>
+    </div>
   );
 }
 
@@ -38,6 +45,15 @@ function Drawer({ item, onClose }) {
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
+
+  // Поки дровер відкритий — сторінка під ним не прокручується (критично для
+  // повноекранного bottom sheet на телефоні, приємно і на десктопі).
+  useEffect(() => {
+    if (!item) return undefined;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => { document.body.style.overflow = prev; };
+  }, [item]);
 
   if (!item) return null;
   const { session: s, flags } = item;
@@ -126,9 +142,51 @@ const SORT_GET = {
   flags: (it) => (it.flags || []).length,
 };
 
+/** Телефонний список карток замість таблиці (CONTRACT v1.4, ≤640px). */
+function SessionCards({ rows, onSelect }) {
+  return (
+    <div className="session-cards">
+      {rows.map((item) => {
+        const s = item.session;
+        const t = s.totals || {};
+        return (
+          <div
+            key={s.sessionId}
+            className="card session-card"
+            role="button"
+            tabIndex={0}
+            onClick={() => onSelect(item)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                onSelect(item);
+              }
+            }}
+          >
+            <div className="session-card-top">
+              <span className="session-card-title">
+                {s.title || s.sessionId}
+                {s.sidechain && <span className="side-badge">сабчейн</span>}
+              </span>
+              <span className="session-card-cost">{fmtUsd(t.costUsd)}</span>
+            </div>
+            <div className="session-card-meta">{s.project} · {fmtDateTime(s.startedAt)}</div>
+            {item.flags.length > 0 && (
+              <div className="chip-row">
+                {item.flags.map((f) => <FlagChip key={f.type} type={f.type} />)}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 export default function SessionsTab({ snapshot }) {
   const [selected, setSelected] = useState(null);
   const [sort, setSort] = useState({ key: 'cost', dir: 'desc' }); // типово $ ↓
+  const isPhone = useMediaQuery(PHONE_MEDIA);
   const { flagged } = useMemo(() => analyzeSessions(snapshot), [snapshot]);
 
   const onSort = (key, alpha) => {
@@ -148,6 +206,16 @@ export default function SessionsTab({ snapshot }) {
   }, [flagged, sort]);
 
   if (!rows.length) return <EmptyState text="Немає сесій за вибраний період чи проєкт." />;
+
+  // Телефон: картки (сортування лишається чинним — типово $ ↓), tap → дровер.
+  if (isPhone) {
+    return (
+      <>
+        <SessionCards rows={rows} onSelect={setSelected} />
+        <Drawer item={selected} onClose={() => setSelected(null)} />
+      </>
+    );
+  }
 
   return (
     <Card className="table-card">

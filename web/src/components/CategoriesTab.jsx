@@ -1,6 +1,8 @@
 // Вкладка «Категорії»: Pareto за проєктами, donut за моделями,
 // split Основні/Субагенти, економіка кешу. Період і проєкт застосовує
 // глобальний фільтр в App — снапшот приходить уже відфільтрованим.
+// v1.4: на телефоні h-бар отримує багаторядкові лейбли (useHBarAxis),
+// висоти графіків стискаються ~15% на ≤768 (useChartHeight).
 
 import React, { useMemo } from 'react';
 import {
@@ -12,10 +14,15 @@ import {
 } from '../lib/analytics.js';
 import { fmtUsd, fmtUsdCompact, fmtDayShort, fmtPct, shortModel } from '../lib/format.js';
 import { Card } from './ui.jsx';
-import { GRID, X_PROPS, Y_PROPS, ChartTooltip, LegendRow, buildModelColors, yAxisWidth } from './charts.jsx';
+import {
+  GRID, X_PROPS, Y_PROPS, ChartTooltip, LegendRow, buildModelColors,
+  useMediaQuery, useChartHeight, useHBarAxis, PHONE_MEDIA,
+} from './charts.jsx';
 
 export default function CategoriesTab({ snapshot }) {
   const days = snapshot.days || [];
+  const isPhone = useMediaQuery(PHONE_MEDIA);
+  const h = useChartHeight();
 
   // period = 0: дні вже обрізані глобальним фільтром, додатково не ріжемо.
   const byProject = useMemo(() => costByProject(days, 0), [days]);
@@ -26,6 +33,10 @@ export default function CategoriesTab({ snapshot }) {
     [days, snapshot.pricingUsed]
   );
 
+  // v1.4: на телефоні y-вісь ≤45% контейнера + багаторядкові лейбли (без обрізань).
+  const projAxis = useHBarAxis(byProject.map((x) => x.project), isPhone);
+  const barLabelFmt = isPhone ? fmtUsdCompact : fmtUsd;
+
   const modelColors = useMemo(() => buildModelColors(byModel.map((m) => m.model)), [byModel]);
   const modelTotal = byModel.reduce((a, m) => a + m.costUsd, 0);
   const splitTotal = split.main + split.side;
@@ -34,32 +45,34 @@ export default function CategoriesTab({ snapshot }) {
   return (
     <>
       <Card title="Де живуть витрати" subtitle="Вартість за проєктами, від більшого до меншого">
-        <ResponsiveContainer width="100%" height={Math.max(200, byProject.length * 40)}>
-          <BarChart data={byProject} layout="vertical" margin={{ top: 4, right: 64, left: 8, bottom: 4 }}>
-            <XAxis type="number" hide />
-            <YAxis
-              type="category"
-              dataKey="project"
-              tickLine={false}
-              axisLine={false}
-              width={yAxisWidth(byProject.map((x) => x.project))}
-              tick={{ fontSize: 12, fill: '#1C1C1E' }}
-            />
-            <Tooltip
-              cursor={{ fill: 'rgba(0,0,0,0.04)' }}
-              content={<ChartTooltip nameFormatter={() => 'вартість'} />}
-            />
-            <Bar dataKey="costUsd" fill="#007AFF" barSize={22} radius={[0, 6, 6, 0]}>
-              <LabelList dataKey="costUsd" position="right" formatter={fmtUsd} style={{ fontSize: 12, fill: '#1C1C1E' }} />
-            </Bar>
-          </BarChart>
-        </ResponsiveContainer>
+        <div ref={projAxis.ref}>
+          <ResponsiveContainer width="100%" height={Math.max(200, byProject.length * projAxis.rowHeight)}>
+            <BarChart data={byProject} layout="vertical" margin={{ top: 4, right: isPhone ? 52 : 64, left: isPhone ? 0 : 8, bottom: 4 }}>
+              <XAxis type="number" hide />
+              <YAxis
+                type="category"
+                dataKey="project"
+                tickLine={false}
+                axisLine={false}
+                width={projAxis.yWidth}
+                tick={projAxis.tick}
+              />
+              <Tooltip
+                cursor={{ fill: 'rgba(0,0,0,0.04)' }}
+                content={<ChartTooltip nameFormatter={() => 'вартість'} />}
+              />
+              <Bar dataKey="costUsd" fill="#007AFF" barSize={22} radius={[0, 6, 6, 0]}>
+                <LabelList dataKey="costUsd" position="right" formatter={barLabelFmt} style={{ fontSize: isPhone ? 11 : 12, fill: '#1C1C1E' }} />
+              </Bar>
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
       </Card>
 
       <div className="grid-2">
         <Card title="Вартість за моделями">
           <div className="donut-wrap">
-            <ResponsiveContainer width="100%" height={220}>
+            <ResponsiveContainer width="100%" height={h(220)}>
               <PieChart>
                 <Pie
                   data={byModel}
@@ -109,7 +122,7 @@ export default function CategoriesTab({ snapshot }) {
 
       <div className="grid-2">
         <Card title="Кеш-хіт за днями" subtitle="% cacheRead від усього контексту">
-          <ResponsiveContainer width="100%" height={200}>
+          <ResponsiveContainer width="100%" height={h(200)}>
             <LineChart data={cache} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
               <CartesianGrid {...GRID} />
               <XAxis dataKey="day" {...X_PROPS} tickFormatter={fmtDayShort} minTickGap={28} />
@@ -130,7 +143,7 @@ export default function CategoriesTab({ snapshot }) {
         </Card>
 
         <Card title="Скільки заощадив кеш" subtitle={`Разом за період: ${fmtUsd(savedTotal)}`}>
-          <ResponsiveContainer width="100%" height={200}>
+          <ResponsiveContainer width="100%" height={h(200)}>
             <BarChart data={cache} barCategoryGap="28%" margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
               <CartesianGrid {...GRID} />
               <XAxis dataKey="day" {...X_PROPS} tickFormatter={fmtDayShort} minTickGap={28} />
