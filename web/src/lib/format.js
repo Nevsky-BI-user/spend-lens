@@ -30,10 +30,11 @@ export function fmtUsdCompact(x) {
   return `$${v.toFixed(2).replace('.', ',')}`;
 }
 
-/** Компактні токени: 340k, 1,2M. */
+/** Компактні токени: 340k, 1,2M, 4 897M. */
 export function fmtTokens(x) {
   const v = Number(x) || 0;
   const abs = Math.abs(v);
+  if (abs >= 1e9) return `${group(String(Math.round(v / 1e6)))}M`;
   if (abs >= 1e6) return `${(v / 1e6).toFixed(1).replace('.', ',')}M`;
   if (abs >= 1e3) return `${Math.round(v / 1e3)}k`;
   return group(String(Math.round(v)));

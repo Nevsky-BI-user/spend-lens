@@ -11,6 +11,10 @@ collector/.cache/
 # Collector secrets (Supabase service role key). .env.example IS committed.
 collector/.env
 
+# v1.2 report module: generated PDF digests and SMTP secrets. .env.example IS committed.
+report/out/
+report/.env
+
 # Any .env anywhere (matches basename in every directory; .env.example is safe)
 .env
 .env.local
