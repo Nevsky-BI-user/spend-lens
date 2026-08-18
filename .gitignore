@@ -1,0 +1,35 @@
+# =====================================================================
+# PRIVACY-CRITICAL (public repo): real usage data must NEVER be committed
+# =====================================================================
+
+# Local usage snapshot produced by the collector (real spend/session data)
+web/public/data/usage.json
+
+# Collector per-file cache, LiteLLM pricing cache, run logs
+collector/.cache/
+
+# Collector secrets (Supabase service role key). .env.example IS committed.
+collector/.env
+
+# Any .env anywhere (matches basename in every directory; .env.example is safe)
+.env
+.env.local
+.env.*.local
+
+# =====================================================================
+# Dependencies & build output
+# =====================================================================
+node_modules/
+dist/
+web/dist/
+
+# =====================================================================
+# Logs, editor and OS junk
+# =====================================================================
+*.log
+npm-debug.log*
+.DS_Store
+Thumbs.db
+Desktop.ini
+.vscode/
+.idea/
