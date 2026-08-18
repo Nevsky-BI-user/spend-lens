@@ -30,6 +30,14 @@ export function buildModelColors(models) {
   return map;
 }
 
+/** Ширина YAxis горизонтального бару за найдовшим лейблом — без обрізань.
+ *  Апроксимація: 12px відступ + ~7.2px на символ, стеля 280px (CONTRACT v1.1). */
+export function yAxisWidth(labels) {
+  let max = 0;
+  for (const s of labels || []) max = Math.max(max, String(s ?? '').length);
+  return Math.min(280, Math.round(12 + max * 7.2));
+}
+
 // Пропси «тихих» осей і сітки (світлі суцільні лінії, без вертикальної сітки).
 export const GRID = { vertical: false, stroke: '#E5E5EA', strokeWidth: 1 };
 export const AXIS_TICK = { fontSize: 11, fill: '#8E8E93' };

@@ -1,7 +1,8 @@
-// Вкладка «Категорії»: Pareto за проєктами (з перемикачем періоду),
-// donut за моделями, split Основні/Субагенти, економіка кешу.
+// Вкладка «Категорії»: Pareto за проєктами, donut за моделями,
+// split Основні/Субагенти, економіка кешу. Період і проєкт застосовує
+// глобальний фільтр в App — снапшот приходить уже відфільтрованим.
 
-import React, { useMemo, useState } from 'react';
+import React, { useMemo } from 'react';
 import {
   ResponsiveContainer, BarChart, Bar, LineChart, Line, PieChart, Pie, Cell,
   XAxis, YAxis, CartesianGrid, Tooltip, LabelList,
@@ -10,25 +11,19 @@ import {
   costByProject, costByModel, mainVsSidechain, cacheEconomics,
 } from '../lib/analytics.js';
 import { fmtUsd, fmtUsdCompact, fmtDayShort, fmtPct, shortModel } from '../lib/format.js';
-import { Card, Segmented } from './ui.jsx';
-import { GRID, X_PROPS, Y_PROPS, ChartTooltip, LegendRow, buildModelColors } from './charts.jsx';
-
-const PERIODS = [
-  { value: 7, label: '7 днів' },
-  { value: 30, label: '30 днів' },
-  { value: 0, label: 'Увесь час' },
-];
+import { Card } from './ui.jsx';
+import { GRID, X_PROPS, Y_PROPS, ChartTooltip, LegendRow, buildModelColors, yAxisWidth } from './charts.jsx';
 
 export default function CategoriesTab({ snapshot }) {
-  const [period, setPeriod] = useState(30);
   const days = snapshot.days || [];
 
-  const byProject = useMemo(() => costByProject(days, period), [days, period]);
-  const byModel = useMemo(() => costByModel(days, period), [days, period]);
-  const split = useMemo(() => mainVsSidechain(days, period), [days, period]);
+  // period = 0: дні вже обрізані глобальним фільтром, додатково не ріжемо.
+  const byProject = useMemo(() => costByProject(days, 0), [days]);
+  const byModel = useMemo(() => costByModel(days, 0), [days]);
+  const split = useMemo(() => mainVsSidechain(days, 0), [days]);
   const cache = useMemo(
-    () => cacheEconomics(days, snapshot.pricingUsed, period || 3650),
-    [days, snapshot.pricingUsed, period]
+    () => cacheEconomics(days, snapshot.pricingUsed, 0),
+    [days, snapshot.pricingUsed]
   );
 
   const modelColors = useMemo(() => buildModelColors(byModel.map((m) => m.model)), [byModel]);
@@ -38,10 +33,6 @@ export default function CategoriesTab({ snapshot }) {
 
   return (
     <>
-      <div className="toolbar">
-        <Segmented options={PERIODS} value={period} onChange={setPeriod} />
-      </div>
-
       <Card title="Де живуть витрати" subtitle="Вартість за проєктами, від більшого до меншого">
         <ResponsiveContainer width="100%" height={Math.max(200, byProject.length * 40)}>
           <BarChart data={byProject} layout="vertical" margin={{ top: 4, right: 64, left: 8, bottom: 4 }}>
@@ -51,7 +42,7 @@ export default function CategoriesTab({ snapshot }) {
               dataKey="project"
               tickLine={false}
               axisLine={false}
-              width={110}
+              width={yAxisWidth(byProject.map((x) => x.project))}
               tick={{ fontSize: 12, fill: '#1C1C1E' }}
             />
             <Tooltip

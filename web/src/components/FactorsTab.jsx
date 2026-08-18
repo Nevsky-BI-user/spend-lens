@@ -9,7 +9,7 @@ import { computeFactors } from '../lib/analytics.js';
 import { fmtUsd } from '../lib/format.js';
 import { FLAG_META } from '../lib/rules.js';
 import { Card, EmptyState } from './ui.jsx';
-import { ChartTooltip } from './charts.jsx';
+import { ChartTooltip, yAxisWidth } from './charts.jsx';
 
 export default function FactorsTab({ snapshot }) {
   const factors = useMemo(() => computeFactors(snapshot), [snapshot]);
@@ -35,7 +35,7 @@ export default function FactorsTab({ snapshot }) {
               dataKey="label"
               tickLine={false}
               axisLine={false}
-              width={150}
+              width={yAxisWidth(chartData.map((f) => f.label))}
               tick={{ fontSize: 12, fill: '#1C1C1E' }}
             />
             <Tooltip

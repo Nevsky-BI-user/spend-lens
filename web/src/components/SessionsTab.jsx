@@ -1,5 +1,6 @@
-// Вкладка «Сесії»: таблиця за вартістю ↓, клік по рядку → дровер із
-// міксом моделей, метриками, прапорцями та рекомендаціями сесії.
+// Вкладка «Сесії»: таблиця із сортованими колонками (типово $ ↓),
+// клік по рядку → дровер із міксом моделей, метриками, прапорцями
+// та рекомендаціями сесії.
 
 import React, { useEffect, useMemo, useState } from 'react';
 import { analyzeSessions, sessionRecommendations } from '../lib/analytics.js';
@@ -58,7 +59,7 @@ function Drawer({ item, onClose }) {
 
         <div className="metric-grid">
           <div><span>Вартість</span><strong>{fmtUsd(s.totals?.costUsd)}</strong></div>
-          <div><span>Ходи (юзер / асистент)</span><strong>{fmtInt(s.userTurns)} / {fmtInt(s.assistantTurns)}</strong></div>
+          <div><span>Ходи (користувач / асистент)</span><strong>{fmtInt(s.userTurns)} / {fmtInt(s.assistantTurns)}</strong></div>
           <div><span>Кеш-хіт</span><strong>{fmtPct((s.cacheHitRate || 0) * 100)}</strong></div>
           <div><span>Контекст сер. / макс.</span><strong>{fmtTokens(s.avgContext)} / {fmtTokens(s.maxContext)}</strong></div>
         </div>
@@ -96,18 +97,57 @@ function Drawer({ item, onClose }) {
   );
 }
 
+// Колонки таблиці. Ключі сортування — за CONTRACT v1.1:
+// Назва/Проєкт — алфавіт, Коли — startedAt, Токени — in+out+cacheRead,
+// Кеш-хіт, Контекст (avgContext), $, Прапорці — кількість. «Моделі» не сортуються.
+const COLUMNS = [
+  { key: 'title', label: 'Назва', sortable: true, alpha: true },
+  { key: 'project', label: 'Проєкт', sortable: true, alpha: true },
+  { key: 'when', label: 'Коли', sortable: true },
+  { key: 'models', label: 'Моделі', sortable: false },
+  { key: 'tokens', label: 'Токени (вх / вих / кеш)', sortable: true },
+  { key: 'cache', label: 'Кеш-хіт', sortable: true },
+  { key: 'context', label: 'Контекст', sortable: true },
+  { key: 'cost', label: '$', sortable: true },
+  { key: 'flags', label: 'Прапорці', sortable: true },
+];
+
+const SORT_GET = {
+  title: (it) => (it.session.title || it.session.sessionId || '').toLowerCase(),
+  project: (it) => (it.session.project || '').toLowerCase(),
+  when: (it) => it.session.startedAt || '',
+  tokens: (it) => {
+    const t = it.session.totals || {};
+    return (t.input || 0) + (t.output || 0) + (t.cacheRead || 0);
+  },
+  cache: (it) => it.session.cacheHitRate || 0,
+  context: (it) => it.session.avgContext || 0,
+  cost: (it) => (it.session.totals && it.session.totals.costUsd) || 0,
+  flags: (it) => (it.flags || []).length,
+};
+
 export default function SessionsTab({ snapshot }) {
   const [selected, setSelected] = useState(null);
+  const [sort, setSort] = useState({ key: 'cost', dir: 'desc' }); // типово $ ↓
   const { flagged } = useMemo(() => analyzeSessions(snapshot), [snapshot]);
 
-  const rows = useMemo(
-    () => [...flagged].sort(
-      (a, b) => (b.session.totals?.costUsd || 0) - (a.session.totals?.costUsd || 0)
-    ),
-    [flagged]
-  );
+  const onSort = (key, alpha) => {
+    setSort((s) => (s.key === key
+      ? { key, dir: s.dir === 'desc' ? 'asc' : 'desc' }
+      : { key, dir: alpha ? 'asc' : 'desc' })); // нова колонка: алфавіт ↑, числа ↓
+  };
 
-  if (!rows.length) return <EmptyState text="Сесій поки немає." />;
+  const rows = useMemo(() => {
+    const get = SORT_GET[sort.key] || SORT_GET.cost;
+    const mult = sort.dir === 'asc' ? 1 : -1;
+    return [...flagged].sort((a, b) => {
+      const va = get(a), vb = get(b);
+      const cmp = typeof va === 'string' ? va.localeCompare(vb, 'uk') : va - vb;
+      return cmp * mult;
+    });
+  }, [flagged, sort]);
+
+  if (!rows.length) return <EmptyState text="Немає сесій за вибраний період чи проєкт." />;
 
   return (
     <Card className="table-card">
@@ -115,15 +155,31 @@ export default function SessionsTab({ snapshot }) {
         <table className="sessions-table">
           <thead>
             <tr>
-              <th>Назва</th>
-              <th>Проєкт</th>
-              <th>Коли</th>
-              <th>Моделі</th>
-              <th>Токени (вх / вих / кеш)</th>
-              <th>Кеш-хіт</th>
-              <th>Контекст</th>
-              <th>$</th>
-              <th>Прапорці</th>
+              {COLUMNS.map((c) => (
+                <th
+                  key={c.key}
+                  className={c.sortable ? `sortable${sort.key === c.key ? ' sorted' : ''}` : ''}
+                  onClick={c.sortable ? () => onSort(c.key, c.alpha) : undefined}
+                  onKeyDown={c.sortable ? (e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      onSort(c.key, c.alpha);
+                    }
+                  } : undefined}
+                  tabIndex={c.sortable ? 0 : undefined}
+                  title={c.sortable ? `Сортувати за: ${c.label}` : undefined}
+                  aria-sort={
+                    sort.key === c.key
+                      ? (sort.dir === 'asc' ? 'ascending' : 'descending')
+                      : undefined
+                  }
+                >
+                  {c.label}
+                  {c.sortable && sort.key === c.key && (
+                    <span className="sort-ind">{sort.dir === 'asc' ? '▲' : '▼'}</span>
+                  )}
+                </th>
+              ))}
             </tr>
           </thead>
           <tbody>
@@ -138,12 +194,17 @@ export default function SessionsTab({ snapshot }) {
                   </td>
                   <td>{s.project}</td>
                   <td className="cell-when">{fmtDateTime(s.startedAt)}</td>
-                  <td>{Object.keys(s.models || {}).map(shortModel).join(', ')}</td>
+                  <td>
+                    {Object.entries(s.models || {})
+                      .filter(([, m]) => (m.costUsd || 0) > 0) // ховаємо нульові (`<synthetic>`)
+                      .map(([model]) => shortModel(model))
+                      .join(', ')}
+                  </td>
                   <td className="cell-num">{fmtTokens(t.input)} / {fmtTokens(t.output)} / {fmtTokens(t.cacheRead)}</td>
                   <td className="cell-num">{fmtPct((s.cacheHitRate || 0) * 100)}</td>
                   <td className="cell-num">{fmtTokens(s.avgContext)}</td>
                   <td className="cell-num cell-cost">{fmtUsd(t.costUsd)}</td>
-                  <td>
+                  <td className="cell-flags">
                     <div className="chip-row">
                       {item.flags.map((f) => <FlagChip key={f.type} type={f.type} />)}
                     </div>

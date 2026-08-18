@@ -50,16 +50,17 @@ export function CopyButton({ text, label = 'Копіювати промпт' }) 
   );
 }
 
-/** iOS-сегментований перемикач. options: [{value,label}] */
-export function Segmented({ options, value, onChange }) {
+/** iOS-сегментований перемикач (фільтр, не таби — тому radiogroup).
+ *  options: [{value,label}]; ariaLabel — назва групи для скрінрідера. */
+export function Segmented({ options, value, onChange, ariaLabel }) {
   return (
-    <div className="segmented" role="tablist">
+    <div className="segmented" role="radiogroup" aria-label={ariaLabel}>
       {options.map((o) => (
         <button
           key={o.value}
           type="button"
-          role="tab"
-          aria-selected={o.value === value}
+          role="radio"
+          aria-checked={o.value === value}
           className={o.value === value ? 'active' : ''}
           onClick={() => onChange(o.value)}
         >
@@ -67,6 +68,28 @@ export function Segmented({ options, value, onChange }) {
         </button>
       ))}
     </div>
+  );
+}
+
+/**
+ * Дропдаун проєкту в стилі iOS: біла картка, радіус, синій шеврон.
+ * projects — назви, відсортовані за вартістю ↓; value null = усі проєкти.
+ */
+export function ProjectSelect({ projects, value, onChange }) {
+  return (
+    <span className="project-select-wrap">
+      <select
+        className="project-select"
+        value={value || ''}
+        onChange={(e) => onChange(e.target.value || null)}
+        aria-label="Фільтр за проєктом"
+      >
+        <option value="">Усі проєкти</option>
+        {projects.map((p) => (
+          <option key={p} value={p}>{p}</option>
+        ))}
+      </select>
+    </span>
   );
 }
 

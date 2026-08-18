@@ -140,6 +140,30 @@ RLS: enable on all; SELECT for authenticated where `auth.jwt()->>'email' in (sel
 - `scripts/register-task.ps1` — `schtasks /Create /TN "spend-lens-daily" /SC DAILY /ST 20:00` running run-collector.ps1 (uses `-ExecutionPolicy Bypass`, absolute paths).
 - `.github/workflows/deploy.yml` — triggers: push main, `schedule: cron '0 3 * * *'`, workflow_dispatch. Steps: checkout, setup-node 22+cache npm (web/package-lock), npm ci in web, VITE_* from `vars`, build, upload-pages-artifact (web/dist), deploy-pages. Permissions pages:write id-token:write.
 
+## v1.1 UI upgrades (user feedback, binding)
+
+**Global filter toolbar** in App header row (right of tabs, all tabs): (1) period Segmented «7 днів / 30 днів / Увесь час», default «30 днів», anchored to last snapshot day; (2) project dropdown «Усі проєкти» + projects sorted by total cost desc. Filtering applied ONCE in App via memoized `filterSnapshot(snapshot, {period, project})` → tabs consume the filtered snapshot: days by day-range + project; sessions by `startedAt` day-range + project equality. CategoriesTab drops its local period toolbar. OverviewTab: KPI cards respect the project filter but keep their fixed windows (Сьогодні/7/30/Разом); both charts respect period + project.
+
+**SessionsTab sorting**: clickable column headers with ▲/▼ indicator; toggle asc/desc; default $ desc. Sort keys: Назва (alpha), Проєкт (alpha), Коли (startedAt), Токени (input+output+cacheRead total), Кеш-хіт, Контекст (avgContext), $, Прапорці (flag count).
+
+**No truncation anywhere**: horizontal-bar YAxis width computed from longest visible label (approx `min(280, 12 + maxChars*7.2)`); Sessions «Прапорці» cell wraps chips (flex-wrap, per-chip nowrap), column wide enough; table wrapper scrolls horizontally (`overflow-x auto`) instead of clipping. «Моделі» cell hides zero-cost models (`<synthetic>` etc.).
+
+## v1.2 Email PDF digests (binding)
+
+`report/` module, zero UI — a print-optimized HTML → PDF pipeline + SMTP send. Runs locally on schedule.
+
+**CLI**: `node report/report.mjs --type daily|monthly|yearly [--date YYYY-MM-DD] [--no-send] [--out <dir>]`. Anchor «сьогодні» = `--date` or current Kyiv date. daily → that day; monthly → previous calendar month of anchor; yearly → previous calendar year. Reads `web/public/data/usage.json`; REUSES pure libs via import: `web/src/lib/analytics.js`, `rules.js`, `format.js` (they are plain ESM — no build needed).
+
+**Files**: `report/report.mjs` (orchestrator), `render.mjs` (HTML template, all CSS inline, UA copy), `svg.mjs` (hand-rolled inline-SVG charts: h-bar, stacked daily bars, donut; NO chart libs), `pdf.mjs` (find chrome.exe else msedge.exe → `--headless=new --print-to-pdf`), `mailer.mjs` (nodemailer, smtp.gmail.com:465; env `SMTP_USER`, `SMTP_APP_PASSWORD`, `REPORT_TO`; env missing → log «email пропущено», still write PDF, exit 0), `package.json` (dep: nodemailer only), `.env.example` (placeholders only). PDFs → `report/out/` (gitignored). `report/.env` gitignored (root catch-all `.env*` + add `report/out/`).
+
+**Design**: A4 portrait, @page margins ~14mm, same iOS light tokens (bg white for print, #1C1C1E text, accents per web palette, pastel chips), header «spend-lens — зведення за {період}» + generated-at, footer. Numbers via format.js (NNBSP + comma). No external resources — fully self-contained HTML.
+
+**Content** — daily: KPI row (вартість дня, Δ vs попередній день, токени in/out/cacheRead, кеш-хіт, к-сть сесій), h-bar вартість за проєктами (день), model split, top-5 сесій (назва, проєкт, $, чіпи-прапорці), рекомендації дня (buildRecommendations на відфільтрованому дні), попередження якщо день порожній. monthly: KPI (місяць $ vs попередній місяць, токени, кеш-заощадження), stacked daily bars за моделями, top-10 проєктів, top-10 сесій, факторний Pareto, рекомендації. yearly: 12 monthly bars, річні KPI, top-10 проєктів/сесій року, фактори.
+
+**Email**: subject `spend-lens: зведення за {період} — {сума $}`; plaintext body = 3-5 рядків підсумку; PDF attached (`spend-lens-{type}-{date}.pdf`).
+
+**Schedule**: `scripts/run-report.ps1` (PS 5.1): collector collect (push) → report daily; if day==1 also monthly; if Jan 1 also yearly; log `collector/.cache/report-run.log`. `scripts/register-report-task.ps1`: schtasks "spend-lens-report" daily 21:00.
+
 ## Privacy (public repo!)
 
 `.gitignore` MUST cover: `web/public/data/usage.json`, `collector/.cache/`, `collector/.env`, `node_modules`, `dist`. No real usage numbers, session titles, client/project names, or `HEAVY_METAL` username in committed files — docs use `%USERPROFILE%`. demo.json = synthetic projects («proj-alpha», «proj-beta»...). README in Ukrainian.

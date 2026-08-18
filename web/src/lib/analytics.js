@@ -62,14 +62,74 @@ function shiftDay(day, delta) {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
 }
 
+/**
+ * Форматер ISO-мітки → 'YYYY-MM-DD' у часовому поясі снапшота.
+ * days бакетуються колектором у snapshot.timezone (Europe/Kyiv), тож
+ * startedAt сесій треба зводити до дня в ТОМУ САМОМУ поясі — інакше для
+ * глядача з іншим поясом сесії біля опівночі випадають з вікна періоду
+ * або потрапляють у нього зайвий раз. Невалідний/відсутній пояс →
+ * локальний час як запасний варіант.
+ */
+function isoDayFormatter(timeZone) {
+  try {
+    const fmt = new Intl.DateTimeFormat('en-CA', {
+      timeZone, year: 'numeric', month: '2-digit', day: '2-digit',
+    });
+    return (iso) => fmt.format(new Date(iso));
+  } catch {
+    return (iso) => {
+      const d = new Date(iso);
+      const p = (n) => String(n).padStart(2, '0');
+      return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+    };
+  }
+}
+
+// ------------------------------------------------------ глобальний фільтр ---
+
+/** Проєкти за сумарною вартістю ↓ (для дропдауна «Усі проєкти»). */
+export function projectsByCost(days) {
+  const map = new Map();
+  for (const d of days || []) {
+    map.set(d.project, (map.get(d.project) || 0) + (d.costUsd || 0));
+  }
+  return [...map.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .map(([project]) => project);
+}
+
+/**
+ * Глобальний фільтр снапшота (чиста функція, мемоїзується в App):
+ *  period  — кількість днів (7/30) від останнього дня снапшота; 0 = увесь час;
+ *  project — назва проєкту або null = усі проєкти.
+ * days фільтруються за днем і проєктом; sessions — за днем startedAt і проєктом.
+ */
+export function filterSnapshot(snapshot, { period = 0, project = null } = {}) {
+  const days = snapshot.days || [];
+  const sessions = snapshot.sessions || [];
+  const anchor = lastDay(days);
+  const from = period && anchor ? shiftDay(anchor, -(period - 1)) : null;
+  const projOk = (p) => !project || p === project;
+  const toDay = from ? isoDayFormatter(snapshot.timezone) : null;
+
+  return {
+    ...snapshot,
+    days: days.filter((d) => projOk(d.project) && (!from || d.day >= from)),
+    sessions: sessions.filter(
+      (s) => projOk(s.project) && (!from || (s.startedAt && toDay(s.startedAt) >= from))
+    ),
+  };
+}
+
 // ---------------------------------------------------------------- KPI --------
 
 /**
  * KPI: Сьогодні / 7 днів / 30 днів / Разом (+% проти попереднього періоду).
- * «Сьогодні» = останній день снапшота.
+ * «Сьогодні» = anchorDay (останній день ПОВНОГО снапшота), щоб фільтр
+ * за проєктом не зсував вікна на останній активний день проєкту.
  */
-export function computeKpis(days) {
-  const today = lastDay(days);
+export function computeKpis(days, anchorDay = null) {
+  const today = anchorDay || lastDay(days);
   if (!today) return [];
   const inRange = (from, to) => days.filter((d) => d.day >= from && d.day <= to);
   const cost = (rows) => sum(rows, (r) => r.costUsd || 0);

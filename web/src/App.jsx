@@ -1,8 +1,11 @@
 // Кореневий компонент: резолюція режиму даних (Supabase / local / demo),
-// hash-навігація вкладками, шапка з банером демо-даних.
+// hash-навігація вкладками, шапка з банером демо-даних, глобальний фільтр
+// (період + проєкт) — застосовується ОДИН раз тут, вкладки отримують
+// уже відфільтрований снапшот.
 
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { resolveMode, loadLocalSnapshot, loadDemoSnapshot } from './lib/loadData.js';
+import { filterSnapshot, projectsByCost, lastDay } from './lib/analytics.js';
 import { fmtDateTime } from './lib/format.js';
 import OverviewTab from './components/OverviewTab.jsx';
 import CategoriesTab from './components/CategoriesTab.jsx';
@@ -10,6 +13,7 @@ import SessionsTab from './components/SessionsTab.jsx';
 import FactorsTab from './components/FactorsTab.jsx';
 import ActionsTab from './components/ActionsTab.jsx';
 import LoginCard from './components/LoginCard.jsx';
+import { Segmented, ProjectSelect } from './components/ui.jsx';
 
 const TABS = [
   { id: 'overview', label: 'Огляд', component: OverviewTab },
@@ -17,6 +21,12 @@ const TABS = [
   { id: 'sessions', label: 'Сесії', component: SessionsTab },
   { id: 'factors', label: 'Фактори', component: FactorsTab },
   { id: 'actions', label: 'Дії', component: ActionsTab },
+];
+
+const PERIODS = [
+  { value: 7, label: '7 днів' },
+  { value: 30, label: '30 днів' },
+  { value: 0, label: 'Увесь час' },
 ];
 
 function useHashTab() {
@@ -38,6 +48,31 @@ export default function App() {
   const [mode] = useState(resolveMode);
   const [state, setState] = useState({ status: 'loading' });
   const [tab, go] = useHashTab();
+
+  // --- глобальний фільтр: період (7/30/0=усі) + проєкт (null = усі) ---
+  const [period, setPeriod] = useState(30);
+  const [project, setProject] = useState(null);
+
+  const snapshot = state.status === 'ready' ? state.snapshot : null;
+
+  // Період + проєкт — для всіх вкладок.
+  const filtered = useMemo(
+    () => (snapshot ? filterSnapshot(snapshot, { period, project }) : null),
+    [snapshot, period, project]
+  );
+  // Лише проєкт (без періоду) — для KPI-карток «Огляду» з фіксованими вікнами.
+  const projectOnly = useMemo(
+    () => (snapshot ? filterSnapshot(snapshot, { period: 0, project }) : null),
+    [snapshot, project]
+  );
+  const projects = useMemo(
+    () => (snapshot ? projectsByCost(snapshot.days || []) : []),
+    [snapshot]
+  );
+  const anchorDay = useMemo(
+    () => (snapshot ? lastDay(snapshot.days || []) : ''),
+    [snapshot]
+  );
 
   // --- локальний / демо-режим ---
   useEffect(() => {
@@ -114,7 +149,7 @@ export default function App() {
     );
   }
 
-  const { snapshot, demo, email } = state;
+  const { demo, email } = state;
   const ActiveTab = TABS.find((t) => t.id === tab).component;
 
   return (
@@ -146,24 +181,37 @@ export default function App() {
           </div>
         )}
 
-        <nav className="tabs" role="tablist">
-          {TABS.map((t) => (
-            <button
-              key={t.id}
-              type="button"
-              role="tab"
-              aria-selected={t.id === tab}
-              className={t.id === tab ? 'active' : ''}
-              onClick={() => go(t.id)}
-            >
-              {t.label}
-            </button>
-          ))}
-        </nav>
+        <div className="tabs-row">
+          <nav className="tabs" role="tablist">
+            {TABS.map((t) => (
+              <button
+                key={t.id}
+                type="button"
+                role="tab"
+                aria-selected={t.id === tab}
+                className={t.id === tab ? 'active' : ''}
+                onClick={() => go(t.id)}
+              >
+                {t.label}
+              </button>
+            ))}
+          </nav>
+          <div className="filter-toolbar">
+            <Segmented options={PERIODS} value={period} onChange={setPeriod} ariaLabel="Період" />
+            <ProjectSelect projects={projects} value={project} onChange={setProject} />
+          </div>
+        </div>
       </header>
 
       <main className="app-main">
-        <ActiveTab snapshot={snapshot} />
+        {/* kpiDays/anchorDay використовує лише «Огляд» (KPI з фіксованими
+            вікнами поважають фільтр проєкту, але не період); решта вкладок
+            ці пропси ігнорує. */}
+        <ActiveTab
+          snapshot={filtered}
+          kpiDays={projectOnly ? projectOnly.days : []}
+          anchorDay={anchorDay}
+        />
       </main>
 
       <footer className="app-footer">
