@@ -1074,6 +1074,153 @@ button { font-family: inherit; }
 
 .heatmap-card .muted-text { margin: 10px 0 0; }
 
+/* ============================================ v1.7: дайджести сесій/проєктів */
+
+/* Рядок під назвою сесії: «Правки коду · web/src/components · 12 файлів».
+   Друга (тьмяна) лінія в комірці — не має тягнути висоту рядка, тому 12px. */
+.digest-line {
+  margin-top: 3px;
+  font-size: 12px;
+  line-height: 1.35;
+  color: var(--text-2);
+  font-weight: 400;
+}
+
+/* Чіпи областей і інструментів — той самий пастельний бейдж, що й прапорці. */
+.chip-area { background: rgba(0, 122, 255, .12);  color: #0a5bb5; }
+.chip-tool { background: rgba(88, 86, 214, .12);  color: #3d3ba0; }
+
+/* Шлях довший за ширину телефона мусить переноситись усередині чіпа —
+   інакше один чіп дає горизонтальний скрол усій сторінці (CONTRACT v1.4). */
+.chip-area { white-space: normal; overflow-wrap: anywhere; text-align: left; }
+
+.digest-chips { margin-top: 10px; }
+
+/* Шлях у метриці дровера довший за грошову суму — менший кегль і переноси. */
+.metric-area { font-size: 13px; overflow-wrap: anywhere; }
+
+/* Перший запит користувача — цитата, а не абзац тексту. */
+.intent-quote {
+  margin: 12px 0 0;
+  padding: 10px 14px;
+  border-left: 3px solid var(--line);
+  background: var(--bg);
+  border-radius: 0 12px 12px 0;
+  font-size: 13.5px;
+  line-height: 1.5;
+  color: var(--text);
+}
+
+/* --- вкладка «Проєкти» --- */
+
+/* auto-fill + min(): картка ніколи не ширша за контейнер, тож на 375px
+   сітка стає однією колонкою БЕЗ медіазапиту і без горизонтального скролу. */
+.projects-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(420px, 100%), 1fr));
+  gap: 16px;
+  align-items: start;
+}
+
+.project-card { display: flex; flex-direction: column; }
+
+.project-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.project-name {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: -0.2px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.project-share {
+  font-size: 12px;
+  color: var(--text-2);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.project-summary {
+  margin: 6px 0 0;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--text-2);
+}
+
+.project-kpi { margin-top: 14px; }
+.project-kpi > div { box-shadow: none; background: var(--bg); }
+
+.project-section {
+  margin: 18px 0 8px;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: .4px;
+  color: var(--text-2);
+  font-weight: 600;
+}
+
+/* мікс активностей: 100%-смуга + легенда */
+.activity-bar {
+  display: flex;
+  height: 8px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: var(--line);
+}
+
+.activity-bar > span { display: block; height: 100%; }
+
+.activity-legend {
+  list-style: none;
+  margin: 10px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+}
+
+.activity-legend li { display: flex; align-items: center; gap: 8px; }
+.activity-legend .dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+.activity-label { min-width: 0; overflow-wrap: anywhere; }
+.activity-legend b { margin-left: auto; font-variant-numeric: tabular-nums; }
+
+/* топ-5 сесій проєкту: назва переноситься (жодних обрізань, CONTRACT v1.1) */
+.project-sessions {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  font-size: 13px;
+}
+
+.project-sessions li {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.project-sessions li:last-child { border-bottom: none; }
+.project-session-title { min-width: 0; overflow-wrap: anywhere; }
+
+.project-session-cost {
+  margin-left: auto;
+  font-weight: 600;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.project-actions { margin-top: 16px; padding-top: 4px; }
+.project-actions .btn-secondary { width: auto; }
+
 /* ======================================================= v1.4 responsive ---
    ЛИШЕ @media screen (binding, CONTRACT v1.4): друкований пайплайн
    (print-медіа, фіксовані 766px) цих правил не бачить. web/src/print/** —
@@ -1093,6 +1240,9 @@ button { font-family: inherit; }
   .prompt-box p,
   .action-title,
   .session-card-title,
+  .digest-line,
+  .intent-quote,
+  .project-summary,
   .user-box { overflow-wrap: anywhere; }
 
   /* Мікс моделей у дровері: 5 колонок скроляться всередині обгортки. */
@@ -1220,4 +1370,17 @@ button { font-family: inherit; }
 
 @media screen and (prefers-reduced-motion: reduce) {
   .drawer { animation: none; }
+}
+
+/* v1.7: на широких екранах вкладки й фільтри тримаються в ОДНОМУ ряду.
+   Ряд не переноситься, а першим стискається селект проєкту (він єдиний
+   гнучкий) — решта елементів зберігає свої розміри й тач-цілі.
+   Поріг 1200px: нижче місця фізично бракує і перенос лишається правильним. */
+@media screen and (min-width: 1200px) {
+  .tabs-row { flex-wrap: nowrap; }
+  .filter-toolbar { flex-wrap: nowrap; min-width: 0; }
+  .filter-toolbar .segmented,
+  .filter-toolbar .export-btn { flex: 0 0 auto; }
+  .project-select-wrap { flex: 0 1 auto; min-width: 0; }
+  .project-select { width: 100%; min-width: 150px; }
 }
