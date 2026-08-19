@@ -22,6 +22,7 @@ import { fmtUsd, fmtUsdCompact, fmtDayShort, fmtPct, shortModel } from '../lib/f
 import { Card } from './ui.jsx';
 import EfficiencyGroup from './EfficiencyGroup.jsx';
 import HeatmapCard from './HeatmapCard.jsx';
+import RtkCard from './RtkCard.jsx';
 import {
   GRID, X_PROPS, Y_PROPS, ChartTooltip, LegendRow, buildModelColors,
   useMediaQuery, useChartHeight, useHBarAxis, PHONE_MEDIA,
@@ -183,7 +184,12 @@ function SubagentCard({ days }) {
   );
 }
 
-export default function CategoriesTab({ snapshot, returns = null }) {
+export default function CategoriesTab({
+  snapshot, returns = null,
+  // v1.9: картці RTK потрібні НЕвідфільтровані дні (статистика rtk глобальна,
+  // за проєктами не поділена) і межі періоду — зріз вона робить сама.
+  allDays = null, period = 0, day = null, anchorDay = '',
+}) {
   const days = snapshot.days || [];
   const isPhone = useMediaQuery(PHONE_MEDIA);
   const h = useChartHeight();
@@ -277,6 +283,16 @@ export default function CategoriesTab({ snapshot, returns = null }) {
           </ResponsiveContainer>
         </Card>
       </div>
+
+      <RtkCard
+        rtk={snapshot.rtk}
+        allDays={allDays || days}
+        pricingUsed={snapshot.pricingUsed}
+        period={period}
+        day={day}
+        anchorDay={anchorDay}
+        height={h}
+      />
 
       <EfficiencyGroup
         days={days}

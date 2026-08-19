@@ -281,6 +281,26 @@ On Огляд the card moves to the LAST position (after «Топ проєкті
 ### 4. Картка «Основні проти субагентів» — перероблення
 Problems: `#007AFF` vs `#32ADE6` read as one colour, and the card is mostly empty space. Required: субагенти switch to orange `#FF9500` (main stays blue `#007AFF`) — a clearly different hue; add a large share figure («19 % витрат — субагенти») with caption; fill the empty space with a ranked list of the top-5 projects by subagent share (mini bar + % + $), so the card answers «де саме субагенти зʼїдають бюджет». Keep the same card height class as its `grid-2` sibling.
 
+## v1.9 RTK savings integration (binding)
+
+RTK (Rust Token Killer) is a local CLI proxy that trims command output before it reaches the model. It keeps its own stats; spend-lens must show **how much it saves**.
+
+**Source of truth** (verified on rtk 0.45.0): `rtk gain --format json --daily` → `{summary:{total_commands, total_input, total_output, total_saved, avg_savings_pct, total_time_ms, avg_time_ms}, daily:[{date, commands, input_tokens, output_tokens, saved_tokens, savings_pct, total_time_ms, avg_time_ms}]}`. `--history`/`--quota` are NOT implemented for json (they return summary only) — the per-command table exists only in the text output of plain `rtk gain`; parse it best-effort with a regex and treat failure as non-fatal (`commands: []`).
+
+**Collector** (`collector/rtk.mjs`, called from collect.mjs): spawn `rtk gain --format json --daily` with a 5 s timeout; if the binary is missing, errors, or returns unparseable output → snapshot gets `rtk: null` and a `warnings` entry is NOT added (absence of rtk is normal, not a problem). Also run plain `rtk gain` (5 s) for the top-command table; parse rows `#. command count saved avg% time` into `[{command, count, savedTokens, avgPct}]`, top 10. Dates from rtk are already local calendar days — keep them as-is and DO NOT re-bucket.
+
+Snapshot: new top-level `rtk = {collectedAt, summary, daily, commands}` (schemaVersion stays 2 — consumers must tolerate its absence). Supabase: `meta` row `key='rtk'` (jsonb value) — no new table; `supabaseData.js` reads it back into `snapshot.rtk`.
+
+**Valuation** (`web/src/lib/rtkValue.js`, pure): saved tokens are tokens never sent as INPUT. Value them at the **input** price of the model mix actually used that day: `blendedInput(day) = Σ(model input price × model cost share)` from `pricingUsed` + `days[]`; fall back to the period-wide mix, then to the priciest used model. `valueUsd(day) = saved_tokens × blendedInput / 1e6`. The UI must state this is a **floor** («мінімальна оцінка: збережені токени рахуються як одноразовий вхід, хоча в реальності кожен зайвий рядок ще й перечитувався б з кешу щохода»).
+
+**UI** — new card **«Скільки економить RTK»** on Категорії (after the cache-economics pair):
+- KPI trio: збережено токенів (з %), оцінка в $ (floor), команд оброблено.
+- Daily bar chart of `saved_tokens` aligned to the current period filter (green `#34C759`), with `$` in the tooltip.
+- Top-5 commands list (command, count, saved) when `commands` is non-empty.
+- Absent `snapshot.rtk` → the whole card does not render (no empty state, no error).
+- The period filter applies to the daily chart and to the KPI (sum over visible days); the project filter does NOT apply (rtk stats are not per-project) — say so in the subtitle.
+- PDF daily/monthly report: one compact line in the projects/KPI area — «RTK зберіг {tokens} токенів (~${value}) за період» — only when data exists.
+
 ## Privacy (public repo!)
 
 `.gitignore` MUST cover: `web/public/data/usage.json`, `collector/.cache/`, `collector/.env`, `node_modules`, `dist`. No real usage numbers, session titles, client/project names, or `HEAVY_METAL` username in committed files — docs use `%USERPROFILE%`. demo.json = synthetic projects («proj-alpha», «proj-beta»...). README in Ukrainian.

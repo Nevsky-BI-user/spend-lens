@@ -13,6 +13,9 @@
 //   monthly — попередній календарний місяць якоря date (без date — від сьогодні).
 //   yearly  — попередній календарний рік якоря date.
 //
+// v1.9: під KPI денного й місячного зведення додано рядок про економію RTK
+// (тільки коли дані є) — див. RtkLine.
+//
 // v1.6 (єдина розморожена правка цього файлу): за наявності ?budget= у звіт
 // додається та сама картка «Бюджет місяця», що й на дашборді — компонент
 // спільний, лише без інлайн-редагування (у PDF кнопки мертві). Для yearly
@@ -27,6 +30,7 @@ import {
   analyzeSessions, computeFactors, buildRecommendations, cumulativeMonthCompare,
 } from '../lib/analytics.js';
 import { sessionDigestLine, projectActivityMap, capitalizeFirst } from '../lib/digest.js';
+import { valueRtk, RTK_FLOOR_NOTE_SHORT } from '../lib/rtkValue.js';
 import { parseBudget } from '../lib/urlState.js';
 import { FLAG_META } from '../lib/rules.js';
 import {
@@ -427,6 +431,31 @@ function RecommendationCards({ filtered, limit }) {
 }
 
 /**
+ * Один компактний рядок про економію RTK (CONTRACT v1.9) — денне й місячне
+ * зведення. Рахується по ПОВНИХ днях снапшота, обрізаних вікном звіту:
+ * статистика rtk глобальна, за проєктами не поділена. Немає блоку rtk або
+ * немає жодної команди за період → рядка немає взагалі.
+ *
+ * Число тут те саме, що на дашборді, тож і застереження про природу оцінки
+ * має бути те саме: у PDF немає ні тултіпа, ні картки, де його прочитати.
+ */
+function RtkLine({ snapshot, period }) {
+  const val = valueRtk(snapshot.rtk, {
+    from: period.from,
+    to: period.to,
+    days: snapshot.days || [],
+    pricingUsed: snapshot.pricingUsed || {},
+  });
+  if (!val || val.savedTokens <= 0) return null;
+  return (
+    <p className="print-rtk-line">
+      RTK зберіг {fmtTokens(val.savedTokens)} токенів (~{fmtUsd(val.valueUsd)}) за період
+      {' '}<span className="print-rtk-note">— {RTK_FLOOR_NOTE_SHORT}</span>
+    </p>
+  );
+}
+
+/**
  * Картка бюджету місяця (CONTRACT v1.6 §2) — рахується по ПОВНОМУ снапшоту,
  * а не по періоду звіту: бюджет місячний, і для денного зведення потрібен
  * накопичений підсумок місяця станом на день звіту.
@@ -479,6 +508,7 @@ function DailyReport({ snapshot, period, budgetUsd }) {
   return (
     <>
       <KpiCards kpis={commonKpis(t, tp, period, cur, { costLabel: 'Вартість дня' })} />
+      <RtkLine snapshot={snapshot} period={period} />
       <BudgetBlock snapshot={snapshot} anchorDay={period.to} budgetUsd={budgetUsd} />
       {!cur.days.length ? (
         <div className="warn-banner">
@@ -531,6 +561,7 @@ function MonthlyReport({ snapshot, period, budgetUsd }) {
       <KpiCards kpis={commonKpis(t, tp, period, cur, {
         costLabel: 'Вартість місяця', withSavings: true, withTopProject: true,
       })} />
+      <RtkLine snapshot={snapshot} period={period} />
       <BudgetBlock snapshot={snapshot} anchorDay={period.to} budgetUsd={budgetUsd} />
       {!cur.days.length ? (
         <div className="warn-banner">За {period.label} даних у снапшоті немає.</div>

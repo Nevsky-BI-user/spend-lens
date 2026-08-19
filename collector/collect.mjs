@@ -19,6 +19,8 @@
  *   response is written on several lines that share a message.id but each carry a
  *   DIFFERENT slice of message.content (one tool_use per line), so a message-level
  *   dedup would drop every tool call except the last of a parallel batch.
+ * - v1.9: блок `rtk` (статистика Rust Token Killer) — best-effort, див. rtk.mjs.
+ *   Немає rtk / він упав → snapshot.rtk = null і жодного попередження.
  * - After writing the snapshot: push aggregates to Supabase (skipped silently when
  *   collector/.env is absent, or when --no-push).
  */
@@ -30,6 +32,7 @@ import readline from 'node:readline';
 import { fileURLToPath } from 'node:url';
 import { httpsGetJson } from './http.mjs';
 import { pushToSupabase } from './push.mjs';
+import { collectRtk } from './rtk.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const CACHE_DIR = path.join(__dirname, '.cache');
@@ -52,15 +55,21 @@ function parseArgs(argv) {
     out: path.resolve(__dirname, '..', 'web', 'public', 'data', 'usage.json'),
     push: true,
     verbose: false,
+    rtk: true,
+    // v1.9: шлях до бінара rtk. Потрібен для перевірки деградації — вказавши
+    // неіснуючий файл, можна переконатися, що збір далі працює (snapshot.rtk = null).
+    rtkBin: null,
   };
   for (let i = 2; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--source') args.source = path.resolve(argv[++i]);
     else if (a === '--out') args.out = path.resolve(argv[++i]);
     else if (a === '--no-push') args.push = false;
+    else if (a === '--no-rtk') args.rtk = false;
+    else if (a === '--rtk-bin') args.rtkBin = argv[++i];
     else if (a === '--verbose') args.verbose = true;
     else if (a === '--help' || a === '-h') {
-      console.log('Usage: node collector/collect.mjs [--source <dir>] [--out <file>] [--no-push] [--verbose]');
+      console.log('Usage: node collector/collect.mjs [--source <dir>] [--out <file>] [--no-push] [--no-rtk] [--rtk-bin <path>] [--verbose]');
       process.exit(0);
     } else {
       console.error(`Unknown argument: ${a}`);
@@ -1129,6 +1138,12 @@ async function main() {
     };
   }
 
+  // v1.9: статистика RTK. Відсутність rtk — норма, а не проблема, тому
+  // жодного запису у warnings; споживачі мусять терпіти rtk === null.
+  const rtk = args.rtk
+    ? await collectRtk({ bin: args.rtkBin, verbose: args.verbose })
+    : null;
+
   const snapshot = {
     schemaVersion: SCHEMA_VERSION,
     generatedAt: new Date().toISOString(),
@@ -1139,6 +1154,7 @@ async function main() {
     projects,
     days,
     sessions: keptSessions,
+    rtk,
   };
 
   writeJsonAtomic(args.out, snapshot);
@@ -1158,6 +1174,11 @@ async function main() {
   log(`day rows:   ${days.length}`);
   log(`projects:   ${projects.length} (${projects.filter((p) => p.note).length} with a manual note)`);
   log(`pricing:    ${pricing.source}`);
+  log(
+    rtk
+      ? `rtk:        ${rtk.summary.total_saved} збережених токенів, ${rtk.summary.total_commands} команд, ${rtk.daily.length} дн., ${rtk.commands.length} у таблиці команд`
+      : `rtk:        немає даних (${args.rtk ? 'rtk недоступний' : '--no-rtk'})`
+  );
   if (warnings.size) log(`warnings:   ${[...warnings].join('; ')}`);
   log('--- total cost by model ---');
   for (const [model, cost] of [...modelTotals.entries()].sort((a, b) => b[1] - a[1])) {

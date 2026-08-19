@@ -162,3 +162,31 @@ html:has(body.print-mode) {
 #print-ready {
   display: none;
 }
+
+/* v1.9: рядок про економію RTK під KPI. Одна лінія на всю ширину, зелена
+   крапка-акцент замість картки — це примітка, а не показник. */
+.print-report .print-rtk-line {
+  margin: -4px 0 14px;
+  padding-left: 14px;
+  position: relative;
+  font-size: 12px;
+  color: var(--text-2);
+  break-inside: avoid;
+}
+
+/* Застереження про природу оцінки — того ж рядка, але дрібнішим кеглем:
+   колір тут уже вторинний, тож підпорядкованість дає саме розмір. */
+.print-report .print-rtk-note {
+  font-size: 10.5px;
+}
+
+.print-report .print-rtk-line::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 6px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #34C759;
+}

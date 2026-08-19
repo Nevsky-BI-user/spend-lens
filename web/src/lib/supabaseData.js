@@ -8,6 +8,10 @@
 // Зворотна сумісність: якщо міграцію ще не застосовано, projects_agg просто
 // немає — тоді снапшот лишається schemaVersion 1 і весь новий UI мовчки
 // вимикається (hasDigestData() === false), а не падає.
+//
+// v1.9: колектор кладе статистику RTK у meta під ключем 'rtk' — читаємо її
+// назад у snapshot.rtk, інакше картка «Скільки економить RTK» була б порожня
+// саме в тому режимі, у якому працює опублікований сайт.
 
 import { createClient } from '@supabase/supabase-js';
 
@@ -193,5 +197,9 @@ export async function fetchSnapshot() {
     days: (daysRes.data || []).map(mapDay),
     sessions,
     projects,
+    // v1.9: статистика RTK лежить у meta одним jsonb-рядком. Її може не бути
+    // (rtk не встановлено, стара міграція, старий колектор) — тоді null, і вся
+    // картка «Скільки економить RTK» просто не рендериться.
+    rtk: meta.rtk || null,
   };
 }

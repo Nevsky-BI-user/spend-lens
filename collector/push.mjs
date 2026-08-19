@@ -10,7 +10,7 @@
  *   sessions_agg PK (session_id), `day` is a generated column — not sent;
  *                `digest` jsonb added by 002
  *   projects_agg PK (project) — added by 002
- *   meta         PK (key), value jsonb
+ *   meta         PK (key), value jsonb — включно з рядком 'rtk' (v1.9)
  * Upserts use `Prefer: resolution=merge-duplicates` + `on_conflict=<pk cols>`, <= 500 rows/request.
  *
  * Forward/backward safety: when 002_digests.sql has not been applied yet the digest
@@ -154,6 +154,10 @@ export async function pushToSupabase(snapshot, { envPath, verbose = false } = {}
       { key: 'warnings', value: snapshot.warnings },
       { key: 'timezone', value: snapshot.timezone },
       { key: 'schemaVersion', value: snapshot.schemaVersion },
+      // v1.9: статистика RTK живе в meta (окремої таблиці контракт не заводить).
+      // Пишемо навіть null — інакше після дня без rtk у БД лишалися б застарілі
+      // цифри, і сайт показував би картку, якої вже немає в снапшоті.
+      { key: 'rtk', value: snapshot.rtk ?? null },
     ];
 
     const r1 = await upsert('usage_days', 'day,project,model,sidechain', snapshot.days.map(dayRow));

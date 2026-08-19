@@ -393,11 +393,14 @@ function Dashboard() {
       <main className="app-main">
         {/* kpiDays, anchorDay, period, project, budget і обробники кліків
             використовує переважно «Огляд»; «Сесії» беруть returns для чіпа
-            «Слабка віддача»; «Проєкти» — shareTotalUsd як базу часток. Решта
-            вкладок зайві пропси ігнорує. */}
+            «Слабка віддача»; «Проєкти» — shareTotalUsd як базу часток;
+            «Категорії» — allDays для картки RTK (її статистика глобальна, тож
+            фільтр за проєктом до неї не застосовується). Решта вкладок зайві
+            пропси ігнорує. */}
         <ActiveTab
           snapshot={filtered}
           kpiDays={projectOnly ? projectOnly.days : []}
+          allDays={snapshot.days || []}
           anchorDay={anchorDay}
           period={period}
           project={project}
