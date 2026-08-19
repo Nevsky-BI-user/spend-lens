@@ -38,6 +38,12 @@ $taskRun = '\"' + $psExe + '\" -NoProfile -ExecutionPolicy Bypass -WindowStyle H
 schtasks /Create /F /TN $taskName /SC DAILY /ST $Time /TR $taskRun
 
 if ($LASTEXITCODE -eq 0) {
+    # Умови запуску: дозволити на батареї, не спиняти при переході на батарею
+    # і наздогнати пропущений запуск (комп спав). Без цього schtasks створює
+    # завдання, яке відмовляє з кодом 0x800710E0 на ноутбуці без мережі.
+    $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -ExecutionTimeLimit (New-TimeSpan -Hours 1) -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 10)
+    Set-ScheduledTask -TaskName $taskName -Settings $settings | Out-Null
+
     Write-Host ""
     Write-Host "Task '$taskName' registered: daily at $Time."
     Write-Host "It runs: $runScript"
