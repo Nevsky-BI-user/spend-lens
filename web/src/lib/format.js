@@ -91,6 +91,65 @@ export function fmtDayShort(day) {
   return `${d} ${MONTHS_SHORT[m - 1]}`;
 }
 
+/**
+ * Українська множина: plural(n, 'сесія', 'сесії', 'сесій').
+ * Живе тут, а не в analytics.js, бо форматери (тривалість, діапазон днів)
+ * не мають права залежати від аналітики — залежність іде рівно в один бік.
+ * analytics.js реекспортує цю ж функцію, тож старі імпорти працюють.
+ */
+export function plural(n, one, few, many) {
+  const abs = Math.abs(n) % 100;
+  const d = abs % 10;
+  if (abs > 10 && abs < 20) return many;
+  if (d === 1) return one;
+  if (d >= 2 && d <= 4) return few;
+  return many;
+}
+
+/**
+ * Числова дата для стислих підписів (v1.7): '2026-08-07' → '7.08'.
+ * `withYear` додає дві цифри року — потрібен лише в діапазонах через межу року.
+ */
+export function fmtDayNum(day, { withYear = false } = {}) {
+  const s = String(day || '');
+  if (s.length < 10) return '';
+  const dom = Number(s.slice(8, 10));
+  return withYear ? `${dom}.${s.slice(5, 7)}.${s.slice(2, 4)}` : `${dom}.${s.slice(5, 7)}`;
+}
+
+/**
+ * Діапазон днів для рядка-опису проєкту: '7.08–19.08'.
+ * Один день → без тире; різні роки → рік у обох кінцях (7.08.25–19.08.26).
+ */
+export function fmtDayRange(from, to) {
+  const a = String(from || '');
+  const b = String(to || '');
+  if (!a && !b) return '';
+  if (!a || !b || a === b) return fmtDayNum(a || b);
+  const withYear = a.slice(0, 4) !== b.slice(0, 4);
+  return `${fmtDayNum(a, { withYear })}–${fmtDayNum(b, { withYear })}`;
+}
+
+/**
+ * Тривалість сесії: '45 хв', '6 год 12 хв', '3 дні 4 год'.
+ * Скорочення для годин/хвилин — навмисно: «6 годин 12 хвилин» у метриці
+ * дровера переносилось би на два рядки, а відмінок «год»/«хв» незмінний.
+ */
+export function fmtDuration(ms) {
+  const total = Number(ms);
+  if (!Number.isFinite(total) || total <= 0) return '—';
+  const min = Math.round(total / 60000);
+  if (min < 1) return 'менше хвилини';
+  if (min < 60) return `${min} хв`;
+  const h = Math.floor(min / 60);
+  const m = min % 60;
+  if (h < 24) return m ? `${h} год ${m} хв` : `${h} год`;
+  const d = Math.floor(h / 24);
+  const hh = h % 24;
+  const dayWord = plural(d, 'день', 'дні', 'днів');
+  return hh ? `${d} ${dayWord} ${hh} год` : `${d} ${dayWord}`;
+}
+
 /** ISO → '18 серпня, 14:32'. */
 export function fmtDateTime(iso) {
   if (!iso) return '—';

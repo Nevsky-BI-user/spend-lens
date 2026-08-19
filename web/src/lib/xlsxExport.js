@@ -14,6 +14,7 @@ import {
 } from './analytics.js';
 import { FLAG_META } from './rules.js';
 import { detectSessionAnomalies, withAnomalyFlag } from './anomalies.js';
+import { buildProjectCards, capitalizeFirst, projectSummary } from './digest.js';
 import { fmtDomMonth, shortModel } from './format.js';
 
 // ------------------------------------------------------------ формати ------
@@ -181,13 +182,29 @@ export function buildSheetData(snapshot, meta = {}) {
     sessCount.set(s.project, (sessCount.get(s.project) || 0) + 1);
   }
   const totalUsd = daily.reduce((a, r) => a + r.costUsd, 0);
+  // v1.7b: дайджест проєкту (активність, області, правки, опис) — з того самого
+  // розрахунку, що живить вкладку «Проєкти», щоб аркуш і екран не розходилися.
+  // Снапшот v1: карток із дайджестом немає — колонки лишаються порожніми.
+  const cardByProject = new Map(buildProjectCards(snap).map((c) => [c.project, c]));
   const projects = [...projMap.values()]
-    .map((r) => ({
-      ...r,
-      sessions: sessCount.get(r.project) || 0,
-      share: totalUsd > 0 ? r.costUsd / totalUsd : 0,
-      sidechainShare: r.costUsd > 0 ? r.sidechainUsd / r.costUsd : 0,
-    }))
+    .map((r) => {
+      const c = cardByProject.get(r.project) || null;
+      return {
+        ...r,
+        sessions: sessCount.get(r.project) || 0,
+        share: totalUsd > 0 ? r.costUsd / totalUsd : 0,
+        sidechainShare: r.costUsd > 0 ? r.sidechainUsd / r.costUsd : 0,
+        activity: c && c.activity ? capitalizeFirst(c.activity) : '',
+        areas: c ? c.areas.map((a) => a.path).join(', ') : '',
+        edits: c ? c.edits : null,
+        filesTouched: c ? c.filesTouched : null,
+        sidechainSessions: c ? c.sidechainSessions : null,
+        firstDayText: c && c.firstDay ? fmtDayUa(c.firstDay) : '',
+        lastDayText: c && c.lastDay ? fmtDayUa(c.lastDay) : '',
+        topSessions: c ? c.titles.map((t) => t.title).join(' | ') : '',
+        summary: c ? (c.note || projectSummary(c)) : '',
+      };
+    })
     .sort((a, b) => b.costUsd - a.costUsd);
 
   // --- моделі ---
@@ -232,9 +249,17 @@ export function buildSheetData(snapshot, meta = {}) {
       const anomaly = anomalyById.get(s.sessionId);
       const all = anomaly ? [...flags, anomaly] : flags;
       const t = s.totals || {};
+      const d = s.digest || null;
       return {
         title: s.title || s.sessionId,
         project: s.project,
+        // v1.7b: дайджест сесії. Немає (снапшот v1) → порожні клітинки,
+        // структура аркуша стабільна між версіями снапшота.
+        activity: d && d.activity ? capitalizeFirst(d.activity) : '',
+        areas: d ? (d.areas || []).map((a) => a.path).join(', ') : '',
+        edits: d ? (d.edits || 0) : null,
+        filesTouched: d ? (d.filesTouched || 0) : null,
+        intent: d ? (d.intent || '') : '',
         startedAt: fmtDateTimeUa(s.startedAt, timeZone),
         endedAt: fmtDateTimeUa(s.endedAt, timeZone),
         models: modelsText(s.models),
@@ -441,6 +466,16 @@ export async function buildWorkbook(snapshotSlice, meta = {}) {
     { header: 'Сесій', key: 'sessions', width: 10, numFmt: INT },
     { header: '$ субагентів', key: 'sidechainUsd', width: 14, numFmt: MONEY },
     { header: 'Частка субагентів', key: 'sidechainShare', width: 18, numFmt: PCT },
+    // --- v1.7b: дайджест проєкту ---
+    { header: 'Сесій субагентів', key: 'sidechainSessions', width: 17, numFmt: INT },
+    { header: 'Активність', key: 'activity', width: 22 },
+    { header: 'Області', key: 'areas', width: 44, wrap: true },
+    { header: 'Правки', key: 'edits', width: 11, numFmt: INT },
+    { header: 'Файли', key: 'filesTouched', width: 11, numFmt: INT },
+    { header: 'Перший день', key: 'firstDayText', width: 18 },
+    { header: 'Останній день', key: 'lastDayText', width: 18 },
+    { header: 'Опис', key: 'summary', width: 60, wrap: true },
+    { header: 'Топ-сесії', key: 'topSessions', width: 70, wrap: true },
   ], data.projects);
 
   // ---------------- Моделі -------------------------------------------------
@@ -478,6 +513,12 @@ export async function buildWorkbook(snapshotSlice, meta = {}) {
     { header: '$', key: 'costUsd', width: 12, numFmt: MONEY },
     { header: 'Прапорці', key: 'flags', width: 40, wrap: true },
     { header: 'Оцінка втрат, $', key: 'wasteUsd', width: 16, numFmt: MONEY },
+    // --- v1.7b: дайджест сесії ---
+    { header: 'Активність', key: 'activity', width: 22 },
+    { header: 'Області', key: 'areas', width: 44, wrap: true },
+    { header: 'Правки', key: 'edits', width: 11, numFmt: INT },
+    { header: 'Файли', key: 'filesTouched', width: 11, numFmt: INT },
+    { header: 'Запит', key: 'intent', width: 70, wrap: true },
     { header: 'ID сесії', key: 'sessionId', width: 38 },
   ], data.sessions);
 

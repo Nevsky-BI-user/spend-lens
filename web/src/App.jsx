@@ -14,6 +14,7 @@ import { exportSnapshotXlsx } from './lib/xlsxExport.js';
 import { fmtDateTime, fmtDomMonth } from './lib/format.js';
 import OverviewTab from './components/OverviewTab.jsx';
 import CategoriesTab from './components/CategoriesTab.jsx';
+import ProjectsTab from './components/ProjectsTab.jsx';
 import SessionsTab from './components/SessionsTab.jsx';
 import FactorsTab from './components/FactorsTab.jsx';
 import ActionsTab from './components/ActionsTab.jsx';
@@ -24,6 +25,7 @@ import { Segmented, ProjectSelect, DayChip, ExportButton } from './components/ui
 const TABS = [
   { id: 'overview', label: 'Огляд', component: OverviewTab },
   { id: 'categories', label: 'Категорії', component: CategoriesTab },
+  { id: 'projects', label: 'Проєкти', component: ProjectsTab },
   { id: 'sessions', label: 'Сесії', component: SessionsTab },
   { id: 'factors', label: 'Фактори', component: FactorsTab },
   { id: 'actions', label: 'Дії', component: ActionsTab },
@@ -175,6 +177,14 @@ function Dashboard() {
     () => (snapshot ? filterSnapshot(snapshot, { period: 0, project }) : null),
     [snapshot, project]
   );
+  // Сума ТОГО САМОГО періоду (і дня), але БЕЗ фільтра за проєктом — база для
+  // «N % витрат» на картках вкладки «Проєкти». Без неї частка рахувалася б від
+  // зрізу і після «Показати лише цей проєкт» будь-яка картка ставала б «100 %».
+  const periodTotalUsd = useMemo(() => {
+    if (!snapshot) return 0;
+    const slice = project ? filterSnapshot(snapshot, { period, day }) : filtered;
+    return (slice.days || []).reduce((a, d) => a + (d.costUsd || 0), 0);
+  }, [snapshot, project, period, day, filtered]);
   const projects = useMemo(
     () => (snapshot ? projectsByCost(snapshot.days || []) : []),
     [snapshot]
@@ -372,7 +382,8 @@ function Dashboard() {
       <main className="app-main">
         {/* kpiDays, anchorDay, period, project, budget і обробники кліків
             використовує переважно «Огляд»; «Сесії» беруть anomalies для чіпа
-            «Аномалія» — решта вкладок зайві пропси ігнорує. */}
+            «Аномалія»; «Проєкти» — shareTotalUsd як базу часток. Решта
+            вкладок зайві пропси ігнорує. */}
         <ActiveTab
           snapshot={filtered}
           kpiDays={projectOnly ? projectOnly.days : []}
@@ -381,6 +392,7 @@ function Dashboard() {
           project={project}
           day={day}
           anomalies={anomalies}
+          shareTotalUsd={periodTotalUsd}
           budgetUsd={budget}
           onBudgetChange={setBudget}
           onSelectProject={setProject}

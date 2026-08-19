@@ -3,7 +3,7 @@
 // Гроші — USD. Ціни — USD за MTok (див. CONTRACT.md).
 
 import { RULES, SEVERITY } from './rules.js';
-import { fmtUsd } from './format.js';
+import { fmtUsd, plural } from './format.js';
 
 // ---------------------------------------------------------------- pricing ---
 
@@ -1071,12 +1071,10 @@ export function budgetStatus({ monthCost = 0, forecastTotal = null, budgetUsd = 
 
 // ----------------------------------------------------------- морфологія -----
 
-/** Українська множина: plural(n, 'сесія', 'сесії', 'сесій'). */
-export function plural(n, one, few, many) {
-  const abs = Math.abs(n) % 100;
-  const d = abs % 10;
-  if (abs > 10 && abs < 20) return many;
-  if (d === 1) return one;
-  if (d >= 2 && d <= 4) return few;
-  return many;
-}
+/**
+ * Українська множина: plural(n, 'сесія', 'сесії', 'сесій').
+ * Реалізація переїхала у format.js (v1.7: форматери тривалості й діапазону
+ * днів теж її потребують, а format.js не має права імпортувати analytics.js).
+ * Реекспорт лишає старі імпорти `from './analytics.js'` робочими.
+ */
+export { plural };

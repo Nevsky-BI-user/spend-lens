@@ -7,7 +7,10 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { analyzeSessions, sessionRecommendations } from '../lib/analytics.js';
 import {
-  fmtUsd, fmtTokens, fmtPct, fmtDateTime, fmtInt, shortModel,
+  sessionDigestLine, topTools, sessionDurationMs, capitalizeFirst,
+} from '../lib/digest.js';
+import {
+  fmtUsd, fmtTokens, fmtPct, fmtDateTime, fmtInt, fmtDuration, shortModel,
 } from '../lib/format.js';
 import { Card, FlagChip, CopyButton, EmptyState, FLAG_META_ALL } from './ui.jsx';
 import { useMediaQuery, PHONE_MEDIA } from './charts.jsx';
@@ -35,6 +38,66 @@ function ModelMix({ models }) {
       </tbody>
     </table>
     </div>
+  );
+}
+
+/**
+ * Блок «Що відбувалося» (CONTRACT v1.7b): усе, що колектор дістав із
+ * транскрипту без жодного виклику LLM. Немає дайджесту (снапшот v1) —
+ * блока просто немає, дровер лишається робочим.
+ */
+function WhatHappened({ session }) {
+  const d = session.digest;
+  if (!d) return null;
+  const tools = topTools(d, 5);
+  const areas = d.areas || [];
+  const durationMs = sessionDurationMs(session);
+  const intent = (d.intent || '').trim();
+
+  return (
+    <>
+      <h4 className="drawer-section">Що відбувалося</h4>
+      <div className="metric-grid">
+        <div>
+          <span>Активність</span>
+          <strong>{capitalizeFirst(d.activity) || '—'}</strong>
+        </div>
+        <div>
+          <span>Правки / файли</span>
+          <strong>{fmtInt(d.edits || 0)} / {fmtInt(d.filesTouched || 0)}</strong>
+        </div>
+        <div>
+          <span>Тривалість</span>
+          <strong>{durationMs != null ? fmtDuration(durationMs) : '—'}</strong>
+        </div>
+        <div>
+          <span>Головна область</span>
+          <strong className="metric-area">{areas[0] ? areas[0].path : '—'}</strong>
+        </div>
+      </div>
+
+      {areas.length > 0 && (
+        <div className="chip-row digest-chips">
+          {areas.map((a) => (
+            <span className="chip chip-area" key={a.path} title={`${a.path} — ${fmtInt(a.count)}`}>
+              {a.path}
+            </span>
+          ))}
+        </div>
+      )}
+
+      {tools.length > 0 && (
+        <div className="chip-row digest-chips">
+          {tools.map((t) => (
+            <span className="chip chip-tool" key={t.name}>
+              {t.name}<em>{fmtInt(t.count)}</em>
+            </span>
+          ))}
+        </div>
+      )}
+
+      {intent && <blockquote className="intent-quote">{intent}</blockquote>}
+    </>
   );
 }
 
@@ -79,6 +142,8 @@ function Drawer({ item, onClose }) {
           <div><span>Контекст сер. / макс.</span><strong>{fmtTokens(s.avgContext)} / {fmtTokens(s.maxContext)}</strong></div>
         </div>
 
+        <WhatHappened session={s} />
+
         <h4 className="drawer-section">Мікс моделей</h4>
         <ModelMix models={s.models} />
 
@@ -120,7 +185,7 @@ const COLUMNS = [
   { key: 'project', label: 'Проєкт', sortable: true, alpha: true },
   { key: 'when', label: 'Коли', sortable: true },
   { key: 'models', label: 'Моделі', sortable: false },
-  { key: 'tokens', label: 'Токени (вх / вих / кеш)', sortable: true },
+  { key: 'tokens', label: 'Токени', title: 'вхідні / вихідні / читання з кешу', sortable: true },
   { key: 'cache', label: 'Кеш-хіт', sortable: true },
   { key: 'context', label: 'Контекст', sortable: true },
   { key: 'cost', label: '$', sortable: true },
@@ -148,6 +213,7 @@ function SessionCards({ rows, onSelect }) {
       {rows.map((item) => {
         const s = item.session;
         const t = s.totals || {};
+        const digest = sessionDigestLine(s);
         return (
           <div
             key={s.sessionId}
@@ -169,6 +235,7 @@ function SessionCards({ rows, onSelect }) {
               </span>
               <span className="session-card-cost">{fmtUsd(t.costUsd)}</span>
             </div>
+            {digest && <div className="digest-line">{digest}</div>}
             <div className="session-card-meta">{s.project} · {fmtDateTime(s.startedAt)}</div>
             {item.flags.length > 0 && (
               <div className="chip-row">
@@ -246,7 +313,7 @@ export default function SessionsTab({ snapshot, anomalies = null }) {
                     }
                   } : undefined}
                   tabIndex={c.sortable ? 0 : undefined}
-                  title={c.sortable ? `Сортувати за: ${c.label}` : undefined}
+                  title={[c.title, c.sortable ? `Сортувати за: ${c.label}` : null].filter(Boolean).join(" · ") || undefined}
                   aria-sort={
                     sort.key === c.key
                       ? (sort.dir === 'asc' ? 'ascending' : 'descending')
@@ -265,11 +332,13 @@ export default function SessionsTab({ snapshot, anomalies = null }) {
             {rows.map((item) => {
               const s = item.session;
               const t = s.totals || {};
+              const digest = sessionDigestLine(s);
               return (
                 <tr key={s.sessionId} onClick={() => setSelected(item)}>
                   <td className="cell-title">
                     {s.title || s.sessionId}
                     {s.sidechain && <span className="side-badge">сабчейн</span>}
+                    {digest && <div className="digest-line">{digest}</div>}
                   </td>
                   <td>{s.project}</td>
                   <td className="cell-when">{fmtDateTime(s.startedAt)}</td>

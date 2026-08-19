@@ -96,6 +96,58 @@ html:has(body.print-mode) {
   max-width: 320px;
 }
 
+/* v1.7b: дайджест під назвою сесії — ще дрібніший, ніж на сайті (A4 тісний),
+   і з переносами: шляхи без пробілів інакше розсувають колонку. */
+.print-report .digest-line {
+  font-size: 10.5px;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+}
+
+/* v1.7b: «Чим займалися» — компактний список під барами проєктів дня. */
+.print-report .print-activity {
+  margin-top: 14px;
+  border-top: 1px solid var(--line);
+  padding-top: 10px;
+}
+
+.print-report .print-activity-title {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .4px;
+  color: var(--text-2);
+  margin-bottom: 6px;
+}
+
+.print-report .print-activity-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  font-size: 11.5px;
+  columns: 2;
+  column-gap: 24px;
+}
+
+.print-report .print-activity-list li {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 2px 0;
+  break-inside: avoid;
+}
+
+.print-report .print-activity-project {
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+
+.print-report .print-activity-label {
+  margin-left: auto;
+  color: var(--text-2);
+  white-space: nowrap;
+}
+
 /* Попередження про порожній період */
 .print-report .warn-banner {
   margin-top: 0;

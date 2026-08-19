@@ -26,6 +26,7 @@ import {
   costByProject, costByModel, dailyByModel, cacheEconomics,
   analyzeSessions, computeFactors, buildRecommendations, cumulativeMonthCompare,
 } from '../lib/analytics.js';
+import { sessionDigestLine, projectActivityMap, capitalizeFirst } from '../lib/digest.js';
 import { parseBudget } from '../lib/urlState.js';
 import { FLAG_META } from '../lib/rules.js';
 import {
@@ -215,6 +216,34 @@ function ProjectsBar({ days, limit }) {
   );
 }
 
+/**
+ * v1.7b: стислий рядок «чим займалися» під барами проєктів у денному зведенні —
+ * лише ярлик переважної активності, без областей і чисел (місце в A4 дороге).
+ * Порядок і склад — ті самі проєкти, що на барах.
+ */
+function ProjectActivityList({ days, sessions, limit }) {
+  const byProject = projectActivityMap(sessions);
+  if (!byProject.size) return null;
+  const rows = costByProject(days, 0)
+    .slice(0, limit)
+    .map((p) => ({ project: p.project, activity: byProject.get(p.project) || null }))
+    .filter((r) => r.activity);
+  if (!rows.length) return null;
+  return (
+    <div className="print-activity">
+      <div className="print-activity-title">Чим займалися</div>
+      <ul className="print-activity-list">
+        {rows.map((r) => (
+          <li key={r.project}>
+            <span className="print-activity-project">{r.project}</span>
+            <span className="print-activity-label">{capitalizeFirst(r.activity)}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 /** Донат «розподіл за моделями» з підсумком у центрі (як «Категорії»). */
 function ModelDonut({ days }) {
   const byModel = costByModel(days, 0);
@@ -341,21 +370,27 @@ function TopSessionsTable({ filtered, limit }) {
           </tr>
         </thead>
         <tbody>
-          {rows.map(({ session: s, flags }) => (
-            <tr key={s.sessionId}>
-              <td className="cell-title">
-                {s.title || s.sessionId}
-                {s.sidechain && <span className="side-badge">сабчейн</span>}
-              </td>
-              <td>{s.project}</td>
-              <td className="cell-num cell-cost">{fmtUsd(s.totals?.costUsd)}</td>
-              <td className="cell-flags">
-                <div className="chip-row">
-                  {flags.map((f) => <FlagChip key={f.type} type={f.type} />)}
-                </div>
-              </td>
-            </tr>
-          ))}
+          {rows.map(({ session: s, flags }) => {
+            // v1.7b: той самий однорядковий дайджест, що й у таблиці «Сесій».
+            // Снапшот v1 (без digest) → null, рядка немає, макет незмінний.
+            const digest = sessionDigestLine(s);
+            return (
+              <tr key={s.sessionId}>
+                <td className="cell-title">
+                  {s.title || s.sessionId}
+                  {s.sidechain && <span className="side-badge">сабчейн</span>}
+                  {digest && <div className="digest-line">{digest}</div>}
+                </td>
+                <td>{s.project}</td>
+                <td className="cell-num cell-cost">{fmtUsd(s.totals?.costUsd)}</td>
+                <td className="cell-flags">
+                  <div className="chip-row">
+                    {flags.map((f) => <FlagChip key={f.type} type={f.type} />)}
+                  </div>
+                </td>
+              </tr>
+            );
+          })}
         </tbody>
       </table>
     </div>
@@ -452,7 +487,10 @@ function DailyReport({ snapshot, period, budgetUsd }) {
         </div>
       ) : (
         <>
-          <Card title="Вартість за проєктами"><ProjectsBar days={cur.days} limit={12} /></Card>
+          <Card title="Вартість за проєктами">
+            <ProjectsBar days={cur.days} limit={12} />
+            <ProjectActivityList days={cur.days} sessions={cur.sessions} limit={12} />
+          </Card>
           <Card title="Розподіл за моделями"><ModelDonut days={cur.days} /></Card>
           <Card title="Топ-5 сесій дня"><TopSessionsTable filtered={cur} limit={5} /></Card>
           <Card title="Рекомендації дня"><RecommendationCards filtered={cur} limit={5} /></Card>
