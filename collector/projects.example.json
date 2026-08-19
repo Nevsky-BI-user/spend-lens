@@ -1,0 +1,5 @@
+{
+  "_comment": "Optional manual project notes. Copy to collector/projects.json (gitignored) and keep only real keys. Key = project name as it appears in the dashboard; value = one sentence shown on the Проєкти tab instead of the auto-summary.",
+  "proj-alpha": "Основний продукт: збір даних, вітрина метрик, щоденні звіти.",
+  "proj-beta": "Прототип звітності — експерименти з візуалізаціями, у продакшн не йде."
+}

@@ -13,6 +13,12 @@
  *   files processed in mtime order).
  * - Day bucketing in Europe/Kyiv.
  * - Pricing: LiteLLM fetch (5s timeout, cached) with silent fallback to pricing.json.
+ * - v1.7a digests: per-session tool histogram / areas / edits / filesTouched / intent /
+ *   activity label, plus a top-level projects[] roll-up. Tool facts are deduped by the
+ *   `tool_use` BLOCK id (`toolu_*`, globally unique) — NOT by message.id: one API
+ *   response is written on several lines that share a message.id but each carry a
+ *   DIFFERENT slice of message.content (one tool_use per line), so a message-level
+ *   dedup would drop every tool call except the last of a parallel batch.
  * - After writing the snapshot: push aggregates to Supabase (skipped silently when
  *   collector/.env is absent, or when --no-push).
  */
@@ -30,9 +36,11 @@ const CACHE_DIR = path.join(__dirname, '.cache');
 const FILE_CACHE = path.join(CACHE_DIR, 'files.json');
 const LITELLM_CACHE = path.join(CACHE_DIR, 'litellm.json');
 const PRICING_FALLBACK = path.join(__dirname, 'pricing.json');
+const PROJECT_NOTES = path.join(__dirname, 'projects.json'); // optional, gitignored
 const LITELLM_URL =
   'https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json';
-const CACHE_VERSION = 3;
+const CACHE_VERSION = 8; // v1.7a: області без службових тек харнесу
+const SCHEMA_VERSION = 2;
 const TZ = 'Europe/Kyiv';
 const PARSE_CONCURRENCY = 8;
 
@@ -113,20 +121,312 @@ function kyivDay(tsMs) {
   return d;
 }
 
-// ---------------------------------------------------------------- title cleaning
+// ---------------------------------------------------------------- text cleaning
+
+/**
+ * Identity masking. Everything derived from a transcript can end up in the snapshot,
+ * in Supabase and in an emailed PDF/XLSX, so the machine account must never ride along:
+ * the home directory becomes %USERPROFILE% and any stray occurrence of the account name
+ * becomes %USERNAME%. The name is matched loosely (`HEAVY_METAL` / `HEAVY METAL` /
+ * `HEAVY-METAL`) because markdown stripping elsewhere can turn `_` into a space.
+ */
+const rxEscape = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const HOME_DIR = os.homedir() || '';
+const HOME_RE = HOME_DIR
+  ? new RegExp(rxEscape(HOME_DIR).replace(/\\\\|\//g, '[\\\\/]'), 'gi')
+  : null;
+const ACCOUNT_NAME = HOME_DIR.split(/[\\/]/).filter(Boolean).pop() || '';
+const ACCOUNT_RE =
+  ACCOUNT_NAME.length >= 4
+    ? new RegExp(ACCOUNT_NAME.split(/[_\-\s]+/).map(rxEscape).join('[_\\-\\s]?'), 'gi')
+    : null;
+
+function maskIdentity(s) {
+  let t = s;
+  if (HOME_RE) t = t.replace(HOME_RE, '%USERPROFILE%');
+  if (ACCOUNT_RE) t = t.replace(ACCOUNT_RE, '%USERNAME%');
+  return t;
+}
+
+/**
+ * Secret redaction. `intent` is the FIRST user message — the exact turn where
+ * «ось ключ, полагодь конфіг» happens — and it leaves the machine by email, so any
+ * credential-shaped token is replaced before the text is stored. Over-redaction is the
+ * intended failure mode.
+ */
+const SECRET_MASK = '«приховано»';
+// [pattern, replacement] — the credential NAME is kept so the intent still reads
+// («SUPABASE_ANON_KEY=«приховано»»); only the value dies.
+const SECRET_PATTERNS = [
+  [/-----BEGIN[ A-Z]*PRIVATE KEY-----[\s\S]*?(?:-----END[ A-Z]*PRIVATE KEY-----|$)/g, SECRET_MASK],
+  // NAME=value / NAME: value where the NAME itself declares a credential
+  [
+    /\b([A-Za-z][A-Za-z0-9_]*(?:KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIALS?|PRIVATE)[A-Za-z0-9_]*\s*[:=]\s*)\S+/g,
+    `$1${SECRET_MASK}`,
+  ],
+  [
+    /\b(password|passwd|pwd|api[_-]?key|apikey|secret|token|bearer|пароль)(\s*[:=]\s*)\S+/gi,
+    `$1$2${SECRET_MASK}`,
+  ],
+  // bare provider tokens
+  [/\bsk-ant-[A-Za-z0-9_-]{8,}/g, SECRET_MASK],
+  [/\bsk-[A-Za-z0-9]{16,}/g, SECRET_MASK],
+  [/\bgithub_pat_[A-Za-z0-9_]{20,}/g, SECRET_MASK],
+  [/\bgh[pousr]_[A-Za-z0-9]{16,}/g, SECRET_MASK],
+  [/\bglpat-[A-Za-z0-9_-]{16,}/g, SECRET_MASK],
+  [/\bxox[abposr]-[A-Za-z0-9-]{10,}/g, SECRET_MASK],
+  [/\b(?:AKIA|ASIA)[0-9A-Z]{12,}/g, SECRET_MASK],
+  [/\bAIza[0-9A-Za-z_-]{30,}/g, SECRET_MASK],
+  [/\bsb[ps]_[A-Za-z0-9_-]{20,}/g, SECRET_MASK],
+  [/\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{5,}/g, SECRET_MASK],
+];
+
+function redactSecrets(s) {
+  let t = s;
+  for (const [re, to] of SECRET_PATTERNS) t = t.replace(re, to);
+  return t;
+}
+
+/** Strip harness noise blocks that are never part of what the user actually asked. */
+function stripNoiseBlocks(s) {
+  let t = s;
+  t = t.replace(/<system-reminder>[\s\S]*?(<\/system-reminder>|$)/gi, ' ');
+  t = t.replace(/<task-notification>[\s\S]*?(<\/task-notification>|$)/gi, ' ');
+  t = t.replace(/<local-command-stdout>[\s\S]*?(<\/local-command-stdout>|$)/gi, ' ');
+  return t;
+}
 
 function cleanTitle(s) {
   if (!s || typeof s !== 'string') return '';
-  let t = s;
-  t = t.replace(/<system-reminder>[\s\S]*?(<\/system-reminder>|$)/g, ' ');
+  let t = stripNoiseBlocks(s);
   t = t.replace(/<command-name>([\s\S]*?)<\/command-name>/g, ' $1 ');
   t = t.replace(/<command-message>[\s\S]*?<\/command-message>/g, ' ');
   t = t.replace(/<command-args>([\s\S]*?)<\/command-args>/g, ' $1 ');
-  t = t.replace(/<local-command-stdout>[\s\S]*?(<\/local-command-stdout>|$)/g, ' ');
   t = t.replace(/<[a-zA-Z][^>\n]{0,60}>|<\/[a-zA-Z][^>\n]{0,60}>/g, ' ');
+  // titles are emailed / pushed to Supabase too — no credentials, no account name
+  t = maskIdentity(redactSecrets(t));
   t = t.replace(/\s+/g, ' ').trim();
   if (t.length > 110) t = t.slice(0, 109).trimEnd() + '…';
   return t;
+}
+
+/** Truncate at a word boundary, appending an ellipsis. */
+function truncateWords(s, max) {
+  if (s.length <= max) return s;
+  let cut = s.slice(0, max - 1);
+  const sp = cut.lastIndexOf(' ');
+  if (sp > max * 0.5) cut = cut.slice(0, sp);
+  return cut.replace(/[\s,;:.\-–—]+$/, '') + '…';
+}
+
+/**
+ * digest.intent — the first user message, cleaned: harness blocks, slash-command
+ * wrappers and fenced code go away; the command name and its args survive (for a
+ * `/loop …` session the command line IS the intent); 200 chars on a word boundary.
+ *
+ * PRIVACY: this string is stored in the snapshot, pushed to sessions_agg.digest and
+ * shipped in the emailed PDF/XLSX. Credentials are redacted and every path is reduced
+ * to a basename BEFORE the markdown pass — that pass turns `_` into a space, which
+ * would otherwise split `HEAVY_METAL` and defeat both the path regex and a naive
+ * username grep on the snapshot.
+ */
+function cleanIntent(s) {
+  if (!s || typeof s !== 'string') return '';
+  let t = stripNoiseBlocks(s);
+  // <command-message> is just the slash-command label (redundant with the name);
+  // the NAME and the ARGS are the user's actual request, so they are unwrapped, not cut.
+  t = t.replace(/<command-message>[\s\S]*?(<\/command-message>|$)/gi, ' ');
+  t = t.replace(/<command-args>([\s\S]*?)(<\/command-args>|$)/gi, ' $1 ');
+  t = t.replace(/<command-name>([\s\S]*?)(<\/command-name>|$)/gi, ' $1 ');
+  t = t.replace(/<command-[a-z-]*>[\s\S]*?(<\/command-[a-z-]*>|$)/gi, ' ');
+  t = t.replace(/```[\s\S]*?(```|$)/g, ' ');
+  t = t.replace(/~~~[\s\S]*?(~~~|$)/g, ' ');
+  t = t.replace(/<[a-zA-Z][^>\n]{0,60}>|<\/[a-zA-Z][^>\n]{0,60}>/g, ' ');
+  // order matters: secrets → identity → paths → markdown noise (see the note above)
+  t = redactSecrets(t);
+  t = maskIdentity(t);
+  t = shortenPaths(t);
+  t = t.replace(/[`*_>#]+/g, ' ');
+  t = t.replace(/\s+/g, ' ').trim();
+  if (!t) return '';
+  return truncateWords(t, 200);
+}
+
+/** Collapse long/absolute paths down to their basename so titles stay readable. */
+function shortenPaths(s) {
+  return s
+    .replace(/[A-Za-z]:[\\/][^\s"'`,;)]+/g, (m) => m.split(/[\\/]/).filter(Boolean).pop() || m)
+    .replace(/(?:[\w.@+-]+[\\/]){2,}[\w.@+-]*/g, (m) => m.split(/[\\/]/).filter(Boolean).pop() || m);
+}
+
+const SIDECHAIN_PREFIX = 'субагент: ';
+
+/**
+ * Sidechain sessions open with a machine-written brief (paths, acceptance criteria,
+ * report format). Never surface that raw: take the cleaned intent, drop the paths,
+ * keep the first sentence, prefix «субагент: », cap at 110 chars.
+ */
+function sidechainTitle(text) {
+  let t = shortenPaths(maskIdentity(redactSecrets(String(text || ''))))
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!t) return 'субагент';
+  const cap = 110 - SIDECHAIN_PREFIX.length;
+  // Cut at the first sentence boundary that still leaves a self-contained line.
+  // Briefs open with a boilerplate context clause («Project X, Windows 11, Node 24.»),
+  // so a boundary before ~50 chars is skipped rather than used as the whole title.
+  const re = /[.!?…](?:\s|$)/g;
+  let m;
+  while ((m = re.exec(t))) {
+    if (m.index + 1 < 50) continue;
+    if (m.index + 1 <= cap) t = t.slice(0, m.index);
+    break;
+  }
+  t = t.replace(/\s+/g, ' ').trim();
+  if (t.length > cap) t = truncateWords(t, cap);
+  return SIDECHAIN_PREFIX + t;
+}
+
+// ---------------------------------------------------------------- digest primitives
+
+/**
+ * MCP tool names are `mcp__<server>__<tool>`; the server is what carries meaning.
+ * Contract-named aliases first, then the bare server label; plain tools keep their name.
+ */
+const MCP_ALIASES = {
+  Claude_Browser: 'browser',
+  'claude-in-chrome': 'browser',
+  'computer-use': 'computer',
+};
+function normTool(name) {
+  if (typeof name !== 'string' || !name) return 'unknown';
+  if (!name.startsWith('mcp__')) return name;
+  const server = name.split('__')[1] || 'mcp';
+  if (MCP_ALIASES[server]) return MCP_ALIASES[server];
+  let s = server;
+  if (s.startsWith('plugin_')) {
+    // plugin servers are `plugin_<bundle>_<server>`, sometimes with a version bundle
+    // (`plugin_0_3_6_powerbi-modeling-mcp`) — the trailing server name is the useful bit
+    s = s.slice(7).replace(/^(?:\d+[._])+/, '');
+    const cut = s.lastIndexOf('_');
+    if (cut > 0) s = s.slice(cut + 1);
+  }
+  if (/^[0-9a-f]{8}-[0-9a-f]{4}-/i.test(s) || /^[0-9a-f]{16,}$/i.test(s)) s = 'mcp';
+  return s || 'mcp';
+}
+
+const PATH_KEYS = ['file_path', 'path', 'notebook_path'];
+const EDIT_TOOLS = new Set(['Edit', 'Write', 'NotebookEdit']);
+const ORCH_TOOLS = new Set(['Agent', 'Workflow']);
+
+/**
+ * Dedup key for one tool call. The `tool_use` block carries its own globally unique
+ * `toolu_*` id; the `toolu_` prefix is dropped to keep the file cache small. Real API
+ * records always have it — the fallback only guards hand-edited/truncated transcripts
+ * and stays stable across the duplicated lines of one message.
+ */
+function toolBlockKey(block, msgKey, idx) {
+  const id = block.id;
+  if (typeof id === 'string' && id) return id.startsWith('toolu_') ? id.slice(6) : id;
+  return 'x' + hashKey(`${msgKey}|${idx}|${block.name}`);
+}
+
+/** Pack one tool call into a compact cache string: `name`, `name|area`, `name|area|fileKey`. */
+function packToolFact(name, area, fileKey) {
+  if (fileKey) return `${name}|${area || ''}|${fileKey}`;
+  if (area) return `${name}|${area}`;
+  return name;
+}
+
+function unpackToolFact(fact) {
+  const i1 = fact.indexOf('|');
+  if (i1 < 0) return [fact, '', ''];
+  const i2 = fact.indexOf('|', i1 + 1);
+  if (i2 < 0) return [fact.slice(0, i1), fact.slice(i1 + 1), ''];
+  return [fact.slice(0, i1), fact.slice(i1 + 1, i2), fact.slice(i2 + 1)];
+}
+
+/** FNV-1a → base36. Only used to count DISTINCT files, never to reconstruct a path. */
+function hashKey(s) {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return (h >>> 0).toString(36);
+}
+
+// Робочі теки самого Claude Code — вони кажуть не про проєкт, а про харнес.
+// Без цього фільтра `scratchpad` і `.claude/plans` витісняють справжні
+// `components/analytics` з топ-5 областей (заміряно: 12,7 % ваги).
+const NOISE_SEGS = new Set([
+  'scratchpad', 'node_modules', '.git', '.cache', 'dist', 'build',
+  'appdata', 'temp', 'tmp', 'out',
+]);
+
+function isHarnessDir(dir) {
+  for (const seg of dir.split('/')) {
+    if (!seg) continue;
+    const low = seg.toLowerCase();
+    if (NOISE_SEGS.has(low)) return true;
+    if (low === '.claude' || low.startsWith('.claude-')) return true;
+    // Мангловані назви тек Claude Code: `C--github-…`, `C--PROJECTS-…`
+    if (/^[a-z]--/i.test(seg)) return true;
+  }
+  return false;
+}
+
+/**
+ * From a raw tool-input path → { area, fileKey }.
+ * area = last 2 segments of the DIRECTORY (forward slashes, drive letter dropped).
+ * fileKey = hash of the full normalized path, only when the value looks like a file.
+ * Harness dirs (scratchpad, .claude, mangled project dirs) contribute no area.
+ */
+function pathFacts(raw) {
+  if (typeof raw !== 'string') return null;
+  let s = raw.replace(/\\/g, '/').trim();
+  if (!s || s.length > 400 || s.includes('|')) return null;
+  s = s.replace(/\/+$/, '');
+  if (!s) return null;
+  const slash = s.lastIndexOf('/');
+  const base = slash >= 0 ? s.slice(slash + 1) : s;
+  const isFile = base.includes('.') && base !== '..' && base !== '.';
+  const dir = isFile ? (slash >= 0 ? s.slice(0, slash) : '') : s;
+  let area = null;
+  if (dir && !isHarnessDir(dir)) {
+    // drop drive letters, dot segments and opaque uuid/hex segments (scratchpad and
+    // worktree dirs are named after session ids and would drown out the real area)
+    const segs = dir
+      .split('/')
+      .filter(
+        (x) =>
+          x &&
+          x !== '.' &&
+          x !== '..' &&
+          !/^[A-Za-z]:$/.test(x) &&
+          !UUID_RE.test(x) &&
+          !/^[0-9a-f]{12,}$/i.test(x)
+      );
+    // areas are shown as chips (Проєкти tab, session drawer) and exported to XLSX/PDF —
+    // scratchpad/worktree dirs are named after the account, so mask it here too
+    if (segs.length) area = maskIdentity(segs.slice(-2).join('/'));
+  }
+  return { area, fileKey: isFile ? hashKey(s.toLowerCase()) : null };
+}
+
+/** Single Ukrainian activity label from the tool mix; first match wins (contract v1.7a). */
+function activityLabel(counts, total) {
+  if (!total) return 'без інструментів';
+  const g = (...names) => names.reduce((a, n) => a + (counts.get(n) || 0), 0);
+  let orch = 0;
+  for (const [n, c] of counts) if (ORCH_TOOLS.has(n) || n.startsWith('Task')) orch += c;
+  if (g('browser') / total >= 0.15) return 'перевірка в браузері';
+  if (g('computer') / total >= 0.15) return 'робота з десктопом';
+  if (orch / total >= 0.08) return 'оркестрація агентів';
+  if (g('Edit', 'Write', 'NotebookEdit') / total >= 0.25) return 'правки коду';
+  if (g('Bash', 'PowerShell') / total >= 0.35) return 'запуски й перевірки';
+  if (g('Read', 'Grep', 'Glob') / total >= 0.35) return 'розбір коду';
+  return 'змішана робота';
 }
 
 // ---------------------------------------------------------------- project derivation
@@ -164,10 +464,16 @@ function deriveProject(cwd, dirName) {
  *   malformed, rawMsgs,
  *   units: {
  *     [key]: { id, sidechain, cwds:{}, dirName, customTitle, lastSummary,
- *              firstUserText, userTurns, firstTs, lastTs,
- *              msgs: { [dedupKey]: [model, tsMs, in, out, read, w5m, w1h] } }
+ *              firstUserText, firstIntent, userTurns, firstTs, lastTs,
+ *              msgs:  { [dedupKey]:  [model, tsMs, in, out, read, w5m, w1h] },
+ *              tools: { [toolBlockKey]: "name|area|fileKey" } }
  *   }
  * }
+ * `msgs` and `tools` are deduped on DIFFERENT keys on purpose. One API response is
+ * written on several lines that share `message.id` and repeat identical usage but each
+ * carry a different SLICE of `message.content` — so usage must collapse per message,
+ * while tool calls must collapse per `tool_use` block id or a parallel batch loses
+ * everything except its last block (~20 % of all calls on the real corpus).
  */
 function parseFile(file, dirName) {
   return new Promise((resolve) => {
@@ -189,10 +495,12 @@ function parseFile(file, dirName) {
           customTitle: null,
           lastSummary: null,
           firstUserText: null,
+          firstIntent: null,
           userTurns: 0,
           firstTs: null,
           lastTs: null,
           msgs: {},
+          tools: {},
         };
       }
       if (sidechain) u.sidechain = true;
@@ -268,7 +576,7 @@ function parseFile(file, dirName) {
         }
         const ts = o.timestamp ? Date.parse(o.timestamp) : NaN;
         // keep LAST occurrence within the file (object assignment overwrites)
-        unit.msgs[dedupKey] = [
+        const arr = [
           msg.model || 'unknown',
           Number.isNaN(ts) ? 0 : ts,
           u.input_tokens || 0,
@@ -277,6 +585,32 @@ function parseFile(file, dirName) {
           w5,
           w1,
         ];
+        unit.msgs[dedupKey] = arr;
+
+        // v1.7a digest facts: one entry per tool_use BLOCK, keyed by the block's own id
+        // (duplicated lines repeat block ids, so the map collapses them by itself).
+        const content = msg.content;
+        if (Array.isArray(content)) {
+          for (let bi = 0; bi < content.length; bi++) {
+            const b = content[bi];
+            if (!b || b.type !== 'tool_use') continue;
+            let area = '';
+            let fileKey = '';
+            const inp = b.input;
+            if (inp && typeof inp === 'object') {
+              for (const k of PATH_KEYS) {
+                if (typeof inp[k] !== 'string') continue;
+                const pf = pathFacts(inp[k]);
+                if (pf) {
+                  area = pf.area || '';
+                  fileKey = pf.fileKey || '';
+                }
+                break; // one path per tool call
+              }
+            }
+            unit.tools[toolBlockKey(b, dedupKey, bi)] = packToolFact(normTool(b.name), area, fileKey);
+          }
+        }
         return;
       }
       if (o.type === 'user') {
@@ -297,7 +631,10 @@ function parseFile(file, dirName) {
         unit.userTurns++;
         if (!unit.firstUserText) {
           const t = cleanTitle(text);
-          if (t) unit.firstUserText = t;
+          if (t) {
+            unit.firstUserText = t;
+            unit.firstIntent = cleanIntent(text) || null;
+          }
         }
       }
     });
@@ -418,6 +755,11 @@ const round = (n, d) => {
   return Math.round(n * f) / f;
 };
 
+const topEntries = (map, n) =>
+  [...map.entries()]
+    .sort((a, b) => b[1] - a[1] || String(a[0]).localeCompare(String(b[0])))
+    .slice(0, n);
+
 // ---------------------------------------------------------------- main
 
 async function main() {
@@ -498,7 +840,8 @@ async function main() {
 
   // 3. merge units across files + GLOBAL dedup (message.id ?? requestId, keep last)
   const sessions = new Map(); // unit key -> merged unit
-  const globalMsgs = new Map(); // dedupKey -> { unitKey, arr }
+  const globalMsgs = new Map(); // dedupKey -> { owner, arr }
+  const globalTools = new Map(); // tool_use block id -> { owner, fact }
   let rawMsgs = 0;
   let malformed = 0;
 
@@ -517,10 +860,12 @@ async function main() {
           customTitle: null,
           lastSummary: null,
           firstUserText: null,
+          firstIntent: null,
           userTurns: 0,
           firstTs: null,
           lastTs: null,
           msgKeys: new Set(),
+          toolKeys: new Set(),
         };
         sessions.set(key, m);
       }
@@ -528,7 +873,10 @@ async function main() {
       for (const [cwd, n] of Object.entries(u.cwds)) m.cwds[cwd] = (m.cwds[cwd] || 0) + n;
       if (u.customTitle) m.customTitle = u.customTitle;
       if (u.lastSummary) m.lastSummary = u.lastSummary;
-      if (u.firstUserText && !m.firstUserText) m.firstUserText = u.firstUserText;
+      if (u.firstUserText && !m.firstUserText) {
+        m.firstUserText = u.firstUserText;
+        m.firstIntent = u.firstIntent || null;
+      }
       m.userTurns += u.userTurns;
       if (u.firstTs !== null && (m.firstTs === null || u.firstTs < m.firstTs)) m.firstTs = u.firstTs;
       if (u.lastTs !== null && (m.lastTs === null || u.lastTs > m.lastTs)) m.lastTs = u.lastTs;
@@ -538,9 +886,16 @@ async function main() {
         globalMsgs.set(dk, { owner: m, arr });
         m.msgKeys.add(dk);
       }
+      for (const [tk, fact] of Object.entries(u.tools || {})) {
+        const prev = globalTools.get(tk);
+        if (prev) prev.owner.toolKeys.delete(tk); // later occurrence wins, as for msgs
+        globalTools.set(tk, { owner: m, fact });
+        m.toolKeys.add(tk);
+      }
     }
   }
   const dedupedMsgs = globalMsgs.size;
+  const dedupedTools = globalTools.size;
 
   // 4. pricing
   const pricing = await loadPricing(args.verbose);
@@ -555,11 +910,10 @@ async function main() {
     return p;
   };
 
-  // 5. aggregate: days (day × project × model × sidechain) + sessions
+  // 5. aggregate: days (day × project × model × sidechain) + sessions (+ digests)
   const dayBuckets = new Map();
   const sessionRows = [];
   const modelTotals = new Map(); // model -> cost
-  const projectTotals = new Map(); // project -> cost
 
   for (const m of sessions.values()) {
     // project from most frequent cwd
@@ -575,6 +929,12 @@ async function main() {
     let ctxSum = 0;
     let ctxMax = 0;
     let nMsgs = 0;
+    // digest accumulators
+    const toolCounts = new Map();
+    const areaCounts = new Map();
+    const fileKeys = new Set();
+    let edits = 0;
+    let toolCalls = 0;
 
     for (const dk of m.msgKeys) {
       const { arr } = globalMsgs.get(dk);
@@ -592,7 +952,6 @@ async function main() {
       ctxSum += ctx;
       if (ctx > ctxMax) ctxMax = ctx;
       modelTotals.set(model, (modelTotals.get(model) || 0) + cost);
-      projectTotals.set(project, (projectTotals.get(project) || 0) + cost);
 
       // day bucket
       if (ts > 0) {
@@ -610,14 +969,48 @@ async function main() {
       }
     }
 
+    // digest facts: one pass over the globally deduped tool_use blocks of this session
+    for (const tk of m.toolKeys) {
+      const entry = globalTools.get(tk);
+      if (!entry) continue;
+      const [name, area, fileKey] = unpackToolFact(entry.fact);
+      toolCounts.set(name, (toolCounts.get(name) || 0) + 1);
+      toolCalls++;
+      if (EDIT_TOOLS.has(name)) edits++;
+      if (area) areaCounts.set(area, (areaCounts.get(area) || 0) + 1);
+      if (fileKey) fileKeys.add(fileKey);
+    }
+
     if (nMsgs === 0 && m.userTurns === 0) continue;
 
     const denom = totals.input + totals.cacheRead + totals.cacheWrite5m + totals.cacheWrite1h;
-    const title = m.customTitle
-      ? cleanTitle(m.customTitle)
-      : m.lastSummary
-        ? cleanTitle(m.lastSummary)
-        : m.firstUserText || '';
+
+    // ---- digest (v1.7a) ----------------------------------------------
+    const intent = m.firstIntent || null;
+    const tools = {};
+    let otherTools = 0;
+    topEntries(toolCounts, Number.MAX_SAFE_INTEGER).forEach(([n, c], i) => {
+      if (i < 8) tools[n] = c;
+      else otherTools += c;
+    });
+    if (otherTools) tools.other = otherTools;
+    const digest = {
+      activity: activityLabel(toolCounts, toolCalls),
+      tools,
+      areas: topEntries(areaCounts, 5).map(([p, c]) => ({ path: p, count: c })),
+      edits,
+      filesTouched: fileKeys.size,
+      intent,
+    };
+
+    // ---- title --------------------------------------------------------
+    const title = m.sidechain
+      ? sidechainTitle(intent || cleanTitle(m.lastSummary) || m.firstUserText || '')
+      : m.customTitle
+        ? cleanTitle(m.customTitle)
+        : m.lastSummary
+          ? cleanTitle(m.lastSummary)
+          : m.firstUserText || '';
 
     for (const mm of Object.values(models)) mm.costUsd = round(mm.costUsd, 4);
     sessionRows.push({
@@ -635,6 +1028,7 @@ async function main() {
       maxContext: ctxMax,
       avgContext: nMsgs ? Math.round(ctxSum / nMsgs) : 0,
       cacheHitRate: denom > 0 ? round(totals.cacheRead / denom, 4) : 0,
+      digest,
     });
   }
 
@@ -661,6 +1055,68 @@ async function main() {
     .filter((s) => s.totals.costUsd >= 0.01)
     .sort((a, b) => b.totals.costUsd - a.totals.costUsd);
 
+  // ---- projects[] (v1.7a) ---------------------------------------------
+  // Money comes from the SAME rounded day rows the dashboard sums, so
+  // sum(projects[].costUsd) === sum(days[].costUsd) by construction.
+  const projAgg = new Map();
+  const projectOf = (name) => {
+    let p = projAgg.get(name);
+    if (!p) {
+      p = {
+        project: name,
+        sessions: 0,
+        sidechainSessions: 0,
+        costUsd: 0,
+        firstDay: null,
+        lastDay: null,
+        modelCost: new Map(),
+        areas: new Map(),
+        activities: new Map(),
+        titled: [],
+      };
+      projAgg.set(name, p);
+    }
+    return p;
+  };
+  for (const d of days) {
+    const p = projectOf(d.project);
+    p.costUsd += d.costUsd;
+    p.modelCost.set(d.model, (p.modelCost.get(d.model) || 0) + d.costUsd);
+    if (p.firstDay === null || d.day < p.firstDay) p.firstDay = d.day;
+    if (p.lastDay === null || d.day > p.lastDay) p.lastDay = d.day;
+  }
+  // Roll up over the sessions the snapshot actually ships (>= $0.01): counting the
+  // sub-cent stubs would let one-message no-op sessions dominate the activity mix and
+  // make «34 сесії» disagree with what the Сесії tab lists for the project.
+  for (const s of keptSessions) {
+    const p = projectOf(s.project);
+    p.sessions++;
+    if (s.sidechain) p.sidechainSessions++;
+    p.activities.set(s.digest.activity, (p.activities.get(s.digest.activity) || 0) + 1);
+    for (const a of s.digest.areas) p.areas.set(a.path, (p.areas.get(a.path) || 0) + a.count);
+    if (s.title) p.titled.push([s.title, s.totals.costUsd]);
+  }
+  const notesRaw = readJsonSafe(PROJECT_NOTES);
+  const notes = notesRaw && typeof notesRaw === 'object' && !Array.isArray(notesRaw) ? notesRaw : {};
+  const projects = [...projAgg.values()]
+    .map((p) => ({
+      project: p.project,
+      sessions: p.sessions,
+      sidechainSessions: p.sidechainSessions,
+      costUsd: round(p.costUsd, 4),
+      firstDay: p.firstDay,
+      lastDay: p.lastDay,
+      models: topEntries(p.modelCost, 3).filter(([, c]) => c > 0).map(([mdl]) => mdl),
+      areas: topEntries(p.areas, 5).map(([pth, count]) => ({ path: pth, count })),
+      activities: topEntries(p.activities, Number.MAX_SAFE_INTEGER).map(([label, count]) => ({ label, count })),
+      titles: p.titled.sort((a, b) => b[1] - a[1]).slice(0, 5).map(([t]) => t),
+      note:
+        typeof notes[p.project] === 'string' && notes[p.project].trim()
+          ? notes[p.project].trim()
+          : null,
+    }))
+    .sort((a, b) => b.costUsd - a.costUsd || a.project.localeCompare(b.project));
+
   const pricingUsed = {};
   for (const [model, p] of priceByModel) {
     if (model === '<synthetic>') continue;
@@ -674,12 +1130,13 @@ async function main() {
   }
 
   const snapshot = {
-    schemaVersion: 1,
+    schemaVersion: SCHEMA_VERSION,
     generatedAt: new Date().toISOString(),
     timezone: TZ,
     pricingSource: pricing.source,
     pricingUsed,
     warnings: [...warnings],
+    projects,
     days,
     sessions: keptSessions,
   };
@@ -695,9 +1152,11 @@ async function main() {
   log('=== spend-lens collector summary ===');
   log(`files:      ${files.length} (parsed ${parsedCount}, cached ${cachedCount})`);
   log(`messages:   ${rawMsgs} raw -> ${dedupedMsgs} after dedup (${rawMsgs - dedupedMsgs} duplicates collapsed)`);
+  log(`tool calls: ${dedupedTools} (deduped by tool_use block id)`);
   log(`malformed:  ${malformed} lines`);
   log(`sessions:   ${sessionRows.length} total, ${keptSessions.length} kept in snapshot (>= $0.01)`);
   log(`day rows:   ${days.length}`);
+  log(`projects:   ${projects.length} (${projects.filter((p) => p.note).length} with a manual note)`);
   log(`pricing:    ${pricing.source}`);
   if (warnings.size) log(`warnings:   ${[...warnings].join('; ')}`);
   log('--- total cost by model ---');
@@ -705,8 +1164,9 @@ async function main() {
     if (cost > 0 || model !== '<synthetic>') log(`  ${model.padEnd(32)} ${fmt$(cost)}`);
   }
   log('--- top-5 projects by cost ---');
-  for (const [project, cost] of [...projectTotals.entries()].sort((a, b) => b[1] - a[1]).slice(0, 5)) {
-    log(`  ${project.padEnd(32)} ${fmt$(cost)}`);
+  for (const p of projects.slice(0, 5)) {
+    const act = (p.activities[0] && p.activities[0].label) || '—';
+    log(`  ${p.project.padEnd(32)} ${fmt$(p.costUsd).padStart(10)}  ${act}`);
   }
   log(`TOTAL: ${fmt$(totalCost)}`);
   log(`snapshot:   ${args.out} (${(outSize / 1024 / 1024).toFixed(2)} MB)`);

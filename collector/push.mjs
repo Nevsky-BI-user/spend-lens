@@ -5,11 +5,18 @@
  * When .env is absent (or values are missing/placeholders) the push is skipped SILENTLY
  * (contract: local-only mode must just work).
  *
- * Tables (see supabase/migrations/001_init.sql):
+ * Tables (see supabase/migrations/001_init.sql, 002_digests.sql):
  *   usage_days   PK (day, project, model, sidechain)
- *   sessions_agg PK (session_id), `day` is a generated column — not sent
+ *   sessions_agg PK (session_id), `day` is a generated column — not sent;
+ *                `digest` jsonb added by 002
+ *   projects_agg PK (project) — added by 002
  *   meta         PK (key), value jsonb
  * Upserts use `Prefer: resolution=merge-duplicates` + `on_conflict=<pk cols>`, <= 500 rows/request.
+ *
+ * Forward/backward safety: when 002_digests.sql has not been applied yet the digest
+ * column and projects_agg simply do not exist. Rather than failing the whole push, the
+ * sessions_agg upsert is retried without `digest` and projects_agg is skipped — both
+ * with a loud one-line hint naming the migration.
  */
 
 import fs from 'node:fs';
@@ -70,6 +77,23 @@ function sessionRow(s) {
     max_context: s.maxContext,
     avg_context: s.avgContext,
     cache_hit_rate: s.cacheHitRate,
+    digest: s.digest || null,
+  };
+}
+
+function projectRow(p) {
+  return {
+    project: p.project,
+    sessions: p.sessions,
+    sidechain_sessions: p.sidechainSessions,
+    cost_usd: p.costUsd,
+    first_day: p.firstDay,
+    last_day: p.lastDay,
+    models: p.models,
+    areas: p.areas,
+    activities: p.activities,
+    titles: p.titles,
+    note: p.note,
   };
 }
 
@@ -109,14 +133,18 @@ export async function pushToSupabase(snapshot, { envPath, verbose = false } = {}
         headers
       );
       if (res.status >= 400) {
-        console.warn(`[push] ${table} batch ${i / BATCH + 1}: HTTP ${res.status} ${res.body.slice(0, 300)}`);
-        return { table, sent, error: res.status };
+        return { table, sent, error: res.status, body: String(res.body || '') };
       }
       sent += batch.length;
       if (verbose) console.log(`[push] ${table}: ${sent}/${rows.length} rows`);
     }
     return { table, sent };
   };
+
+  const warnErr = (r) => console.warn(`[push] ${r.table}: HTTP ${r.error} ${r.body.slice(0, 300)}`);
+  // PostgREST: PGRST204 = column not in schema cache, PGRST205 = table not found
+  const missingColumn = (r) => /PGRST204/.test(r.body) || /column .*digest.* does not exist/i.test(r.body);
+  const missingTable = (r) => r.error === 404 || /PGRST205/.test(r.body);
 
   try {
     const metaRows = [
@@ -127,16 +155,54 @@ export async function pushToSupabase(snapshot, { envPath, verbose = false } = {}
       { key: 'timezone', value: snapshot.timezone },
       { key: 'schemaVersion', value: snapshot.schemaVersion },
     ];
+
     const r1 = await upsert('usage_days', 'day,project,model,sidechain', snapshot.days.map(dayRow));
-    const r2 = await upsert('sessions_agg', 'session_id', snapshot.sessions.map(sessionRow));
-    const r3 = await upsert('meta', 'key', metaRows);
-    const ok = !r1.error && !r2.error && !r3.error;
+    if (r1.error) warnErr(r1);
+
+    let r2 = await upsert('sessions_agg', 'session_id', snapshot.sessions.map(sessionRow));
+    if (r2.error && missingColumn(r2)) {
+      console.warn('[push] sessions_agg has no `digest` column — apply supabase/migrations/002_digests.sql; retrying without digests');
+      const legacy = snapshot.sessions.map((s) => {
+        const row = sessionRow(s);
+        delete row.digest;
+        return row;
+      });
+      r2 = await upsert('sessions_agg', 'session_id', legacy);
+      if (!r2.error) r2.degraded = 'no-digest';
+    }
+    if (r2.error) warnErr(r2);
+
+    const projects = snapshot.projects || [];
+    let r3 = { table: 'projects_agg', sent: 0 };
+    if (projects.length) {
+      r3 = await upsert('projects_agg', 'project', projects.map(projectRow));
+      if (r3.error && missingTable(r3)) {
+        console.warn('[push] table projects_agg is missing — apply supabase/migrations/002_digests.sql; skipping');
+        r3 = { table: 'projects_agg', sent: 0, skipped: true };
+      } else if (r3.error) {
+        warnErr(r3);
+      }
+    }
+
+    const r4 = await upsert('meta', 'key', metaRows);
+    if (r4.error) warnErr(r4);
+
+    const ok = !r1.error && !r2.error && !r3.error && !r4.error;
     console.log(
-      `[push] ${ok ? 'ok' : 'PARTIAL'} — usage_days: ${r1.sent}, sessions_agg: ${r2.sent}, meta: ${r3.sent}`
+      `[push] ${ok ? 'ok' : 'PARTIAL'} — usage_days: ${r1.sent}, sessions_agg: ${r2.sent}${
+        r2.degraded ? ' (no digest)' : ''
+      }, projects_agg: ${r3.sent}${r3.skipped ? ' (skipped)' : ''}, meta: ${r4.sent}`
     );
-    return { pushed: true, ok, usage_days: r1.sent, sessions_agg: r2.sent, meta: r3.sent };
+    return {
+      pushed: true,
+      ok,
+      usage_days: r1.sent,
+      sessions_agg: r2.sent,
+      projects_agg: r3.sent,
+      meta: r4.sent,
+    };
   } catch (e) {
     console.warn(`[push] failed: ${e.message || e}`);
-    return { pushed: false, reason: 'error', error: String(e && e.message || e) };
+    return { pushed: false, reason: 'error', error: String((e && e.message) || e) };
   }
 }
