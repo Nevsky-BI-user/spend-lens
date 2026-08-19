@@ -405,11 +405,15 @@ button { font-family: inherit; }
 .table-card { padding: 6px 0 0; }
 .table-scroll { overflow-x: auto; }
 
+/* min-width зріс із 960 до 1120px разом із підлогами .cell-title/.cell-flags:
+   у auto-layout таблиці колонка без min-width стискається до min-content, а це
+   ~1 символ (overflow-wrap: anywhere нижче). Переповнення лишається всередині
+   .table-scroll — сторінка горизонтально не їде (CONTRACT v1.1/v1.4). */
 .sessions-table {
   width: 100%;
   border-collapse: collapse;
   font-size: 13px;
-  min-width: 960px;
+  min-width: 1120px;
 }
 
 .sessions-table th {
@@ -437,14 +441,17 @@ button { font-family: inherit; }
 
 .sort-ind { margin-left: 4px; font-size: 9px; }
 
-/* чіпи прапорців переносяться, а не обрізаються */
-.cell-flags { min-width: 200px; }
+/* чіпи прапорців переносяться, а не обрізаються (230px = два чіпи в ряд;
+   на 200px вони ставали по одному і рядок ріс утричі) */
+.cell-flags { min-width: 230px; }
 
 .sessions-table tbody tr { cursor: pointer; }
 .sessions-table tbody tr:hover { background: rgba(0, 122, 255, .05); }
 .sessions-table tbody tr:last-child td { border-bottom: none; }
 
-.cell-title { max-width: 260px; font-weight: 500; }
+/* Підлога обов'язкова: v1.7 додав під назву рядок-дайджест, і без min-width
+   колонка стискалася до ~88px, а назва ламалася посеред слова. */
+.cell-title { min-width: 260px; max-width: 340px; font-weight: 500; }
 .cell-when { white-space: nowrap; color: var(--text-2); }
 .cell-num { white-space: nowrap; font-variant-numeric: tabular-nums; }
 .cell-cost { font-weight: 700; }
@@ -1154,8 +1161,15 @@ button { font-family: inherit; }
   color: var(--text-2);
 }
 
+/* Трійця «витрати / сесії / частка субагентів» успадковувала 1fr 1fr від
+   .metric-grid і ламалася 2+1 — третя картка лишалася сама з діркою збоку.
+   На телефоні дві колонки правильні, тому три вмикаємо від 641px. */
 .project-kpi { margin-top: 14px; }
 .project-kpi > div { box-shadow: none; background: var(--bg); }
+
+@media screen and (min-width: 641px) {
+  .project-kpi { grid-template-columns: repeat(3, 1fr); }
+}
 
 .project-section {
   margin: 18px 0 8px;
@@ -1361,6 +1375,12 @@ button { font-family: inherit; }
     align-items: flex-start;
     gap: 8px;
   }
+
+  /* Картка проєкту: частка з'їдала ~64px з 295px контенту, і найпомітніший
+     елемент картки — назва — ламався посеред токена (Rayfin_Operational_Monitori/ng).
+     Частка йде окремим рядком НАД назвою, назва отримує всю ширину. */
+  .project-head { flex-wrap: wrap; }
+  .project-share { order: -1; width: 100%; }
 }
 
 @keyframes drawer-up {
@@ -1383,4 +1403,23 @@ button { font-family: inherit; }
   .filter-toolbar .export-btn { flex: 0 0 auto; }
   .project-select-wrap { flex: 0 1 auto; min-width: 0; }
   .project-select { width: 100%; min-width: 150px; }
+}
+
+/* v1.8: розподіл ширин у таблиці сесій. table-layout:auto віддавав «Назві»
+   мінімум (її текст переноситься, а чіпи й дати — ні), тож назва стискалась
+   до ~100px і рвалась по одному слову. Фіксована розкладка розподіляє простір
+   за змістом: назва — найбільше, службові числові колонки — рівно скільки треба. */
+@media screen and (min-width: 861px) {
+  .sessions-table { table-layout: fixed; }
+  .sessions-table th:nth-child(1), .sessions-table td:nth-child(1) { width: 26%; }
+  .sessions-table th:nth-child(2), .sessions-table td:nth-child(2) { width: 11%; }
+  .sessions-table th:nth-child(3), .sessions-table td:nth-child(3) { width: 10%; }
+  .sessions-table th:nth-child(4), .sessions-table td:nth-child(4) { width: 7%; }
+  .sessions-table th:nth-child(5), .sessions-table td:nth-child(5) { width: 11%; }
+  .sessions-table th:nth-child(6), .sessions-table td:nth-child(6) { width: 6%; }
+  .sessions-table th:nth-child(7), .sessions-table td:nth-child(7) { width: 6%; }
+  .sessions-table th:nth-child(8), .sessions-table td:nth-child(8) { width: 6%; }
+  .sessions-table th:nth-child(9), .sessions-table td:nth-child(9) { width: 17%; }
+  .sessions-table td, .sessions-table th { overflow-wrap: anywhere; }
+  .cell-title { max-width: none; }
 }
