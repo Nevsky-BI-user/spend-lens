@@ -3,6 +3,8 @@
 // глобальний фільтр в App — снапшот приходить уже відфільтрованим.
 // v1.4: на телефоні h-бар отримує багаторядкові лейбли (useHBarAxis),
 // висоти графіків стискаються ~15% на ≤768 (useChartHeight).
+// v1.6: група «Ефективність» (ціна ходу, ціна виходу, KPI-трійця) і теплокарта
+// «Коли горять гроші» — обидві живуть на цьому ж зрізі.
 
 import React, { useMemo } from 'react';
 import {
@@ -14,6 +16,8 @@ import {
 } from '../lib/analytics.js';
 import { fmtUsd, fmtUsdCompact, fmtDayShort, fmtPct, shortModel } from '../lib/format.js';
 import { Card } from './ui.jsx';
+import EfficiencyGroup from './EfficiencyGroup.jsx';
+import HeatmapCard from './HeatmapCard.jsx';
 import {
   GRID, X_PROPS, Y_PROPS, ChartTooltip, LegendRow, buildModelColors,
   useMediaQuery, useChartHeight, useHBarAxis, PHONE_MEDIA,
@@ -157,6 +161,15 @@ export default function CategoriesTab({ snapshot }) {
           </ResponsiveContainer>
         </Card>
       </div>
+
+      <EfficiencyGroup
+        days={days}
+        sessions={snapshot.sessions || []}
+        height={h}
+        isPhone={isPhone}
+      />
+
+      <HeatmapCard sessions={snapshot.sessions || []} timeZone={snapshot.timezone} />
     </>
   );
 }

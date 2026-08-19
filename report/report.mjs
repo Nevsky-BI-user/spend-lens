@@ -9,6 +9,10 @@
 // Читає web/public/data/usage.json і повторно використовує чисті ESM-бібліотеки вебзастосунку
 // (web/src/lib/analytics.js, rules.js, format.js) — без збирання.
 //
+// v1.6: MONTHLY_BUDGET_USD із report/.env додається до URL друку (&budget=),
+// тож у PDF з'являється картка «Бюджет місяця», а в тілі листа — рядок
+// «прогноз проти бюджету». Річне зведення бюджету не показує (він місячний).
+//
 // Рендер PDF (v1.3 «PDF = справжній сайт»): якщо є збірка web/dist/index.html —
 // друкуємо СПРАВЖНІЙ сайт через pdf.mjs::printSite (?print=<type>&date=...);
 // якщо збірки немає — гучний лог і запасний шлях v1.2 (render.mjs + svg.mjs).
@@ -20,6 +24,7 @@ import { fileURLToPath } from 'node:url';
 import {
   costByProject, costByModel, cacheEconomics,
   analyzeSessions, computeFactors, buildRecommendations, plural,
+  cumulativeMonthCompare, budgetStatus,
 } from '../web/src/lib/analytics.js';
 import { FLAG_META } from '../web/src/lib/rules.js';
 import { fmtUsd, fmtUsdCompact, fmtInt, fmtPct, shortModel } from '../web/src/lib/format.js';
@@ -360,9 +365,48 @@ function buildYearly(snapshot, period) {
   return { body, totals: t, filtered: cur };
 }
 
+// -------------------------------------------------------------- бюджет -------
+
+/** MONTHLY_BUDGET_USD → додатне число або null (сміття = «не задано» + лог). */
+function envBudget() {
+  const raw = (process.env.MONTHLY_BUDGET_USD || '').trim();
+  if (!raw) return null;
+  const v = Number(raw.replace(',', '.'));
+  if (!Number.isFinite(v) || v <= 0) {
+    console.error(`[report] MONTHLY_BUDGET_USD="${raw}" — не додатне число, бюджет проігноровано`);
+    return null;
+  }
+  return v;
+}
+
+/**
+ * Рядок «прогноз проти бюджету» для тіла листа (CONTRACT v1.6 §2).
+ * Рахується по ПОВНОМУ снапшоту станом на кінець періоду звіту: бюджет
+ * місячний, тож денному зведенню потрібен накопичений підсумок місяця.
+ */
+function budgetLine({ snapshot, period, type, budgetUsd }) {
+  if (!budgetUsd || type === 'yearly') return null;
+  const cmp = cumulativeMonthCompare(snapshot.days || [], period.to);
+  const st = budgetStatus({
+    monthCost: cmp.curTotal, forecastTotal: cmp.forecastTotal, budgetUsd,
+  });
+  if (!st) return null;
+
+  const head = `Бюджет місяця: ${fmtUsd(st.budgetUsd)} · витрачено ${fmtUsd(st.spentUsd)} (${fmtPct(st.pct)}).`;
+  if (st.forecastTotal == null) {
+    return st.state === 'over'
+      ? `${head} Місяць закрито з перевищенням на ${fmtUsd(st.overUsd)}.`
+      : `${head} Місяць закрито в межах бюджету, невитрачено ${fmtUsd(st.remainingUsd)}.`;
+  }
+  const verdict = st.state === 'over'
+    ? `перевищення на ${fmtUsd(st.overUsd)}`
+    : st.state === 'edge' ? 'це на межі бюджету' : 'це в межах бюджету';
+  return `${head} За поточним темпом місяць закриється на ${fmtUsd(st.forecastTotal)} — ${verdict}.`;
+}
+
 // --------------------------------------------------------------- email -------
 
-function emailText({ period, totals, tp, filtered }) {
+function emailText({ period, totals, tp, filtered, budget = null }) {
   const lines = [`Зведення spend-lens за ${period.label}.`];
   if (!filtered.days.length) {
     lines.push('Даних за період немає — Claude Code не використовувався або collector не запускався.');
@@ -377,6 +421,7 @@ function emailText({ period, totals, tp, filtered }) {
     lines.push(`${fmtInt(n)} ${plural(n, 'сесія', 'сесії', 'сесій')}.` +
       (top ? ` Найдорожчий проєкт: ${top.project} (${fmtUsd(top.costUsd)}).` : ''));
   }
+  if (budget) lines.push(budget);
   lines.push('PDF з деталями — у вкладенні.');
   return lines.join('\n');
 }
@@ -443,6 +488,7 @@ async function main() {
 
   const anchor = args.date || kyivDay();
   const period = computePeriod(args.type, anchor);
+  const budgetUsd = envBudget();
 
   // Підсумки періоду для теми/тіла листа — незалежно від способу рендеру PDF.
   const filtered = filterRange(snapshot, period.from, period.to);
@@ -457,6 +503,7 @@ async function main() {
 
   console.log(`[report] тип: ${args.type} · період: ${period.label} (${period.from}..${period.to}) · якір: ${anchor}`);
   console.log(`[report] витрати за період: ${fmtUsd(totals.cost)} · сесій: ${filtered.sessions.length}`);
+  if (budgetUsd) console.log(`[report] місячний бюджет: ${fmtUsd(budgetUsd)} (MONTHLY_BUDGET_USD)`);
 
   // v1.3: PDF = справжній сайт (web/dist через ефемерний статик-сервер).
   // Немає збірки → ГУЧНИЙ лог + запасний шлях v1.2 (render.mjs + svg.mjs).
@@ -467,7 +514,8 @@ async function main() {
   let printed;
   try {
     if (haveDist) {
-      const urlPath = `/spend-lens/?print=${args.type}&date=${period.printDate}`;
+      const budgetQs = budgetUsd && args.type !== 'yearly' ? `&budget=${encodeURIComponent(budgetUsd)}` : '';
+      const urlPath = `/spend-lens/?print=${args.type}&date=${period.printDate}${budgetQs}`;
       console.log(`[report] друк сайту (v1.3): ${urlPath}`);
       printed = await printSite({ distDir, dataDir, urlPath, outPdf: pdfPath });
     } else {
@@ -495,7 +543,10 @@ async function main() {
   }
 
   const subject = `spend-lens: зведення за ${period.label} — ${fmtUsd(totals.cost)}`;
-  const text = emailText({ period, totals, tp: prevTotals, filtered });
+  const text = emailText({
+    period, totals, tp: prevTotals, filtered,
+    budget: budgetLine({ snapshot, period, type: args.type, budgetUsd }),
+  });
   try {
     const sent = await sendReport({ subject, text, pdfPath, filename: `${baseName}.pdf` });
     if (!sent) console.log('[report] email: пропущено (env не налаштовано), PDF записано — exit 0');

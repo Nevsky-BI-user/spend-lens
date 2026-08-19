@@ -30,6 +30,18 @@ export function fmtUsdCompact(x) {
   return `$${v.toFixed(2).replace('.', ',')}`;
 }
 
+/**
+ * Дрібні гроші (v1.6): вартість одного ходу асистента — це центи, і на двох
+ * знаках $0,05 усі дні виглядають однаково. До $1 показуємо 4 знаки
+ * ($0,0463), від $1 — звичайний fmtUsd.
+ */
+export function fmtUsdFine(x) {
+  const v = Number(x) || 0;
+  if (Math.abs(v) >= 1) return fmtUsd(v);
+  const [i, f] = Math.abs(v).toFixed(4).split('.');
+  return `${v < 0 ? '−' : ''}$${i},${f}`;
+}
+
 /** Компактні токени: 340k, 1,2M, 4 897M. */
 export function fmtTokens(x) {
   const v = Number(x) || 0;

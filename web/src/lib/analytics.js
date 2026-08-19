@@ -98,26 +98,40 @@ export function projectsByCost(days) {
     .map(([project]) => project);
 }
 
+const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
+
 /**
  * Глобальний фільтр снапшота (чиста функція, мемоїзується в App):
  *  period  — кількість днів (7/30) від останнього дня снапшота; 0 = увесь час;
- *  project — назва проєкту або null = усі проєкти.
- * days фільтруються за днем і проєктом; sessions — за днем startedAt і проєктом.
+ *  project — назва проєкту або null = усі проєкти;
+ *  day     — рівно один день 'YYYY-MM-DD' (дрил-даун v1.6). ПЕРЕВИЗНАЧАЄ period:
+ *            користувач клікнув конкретний стовпчик і хоче саме його, а не
+ *            «7 днів, серед яких є цей». Невалідне значення ігнорується.
+ * days фільтруються за днем і проєктом; sessions — за днем startedAt (у поясі
+ * снапшота, як і бакетування колектора) і проєктом.
  */
-export function filterSnapshot(snapshot, { period = 0, project = null } = {}) {
+export function filterSnapshot(snapshot, { period = 0, project = null, day = null } = {}) {
   const days = snapshot.days || [];
   const sessions = snapshot.sessions || [];
+  const exact = DAY_RE.test(day || '') ? day : null;
   const anchor = lastDay(days);
-  const from = period && anchor ? shiftDay(anchor, -(period - 1)) : null;
+  const from = exact || (period && anchor ? shiftDay(anchor, -(period - 1)) : null);
+  const to = exact; // null = без верхньої межі (звичайний період)
   const projOk = (p) => !project || p === project;
   const toDay = from ? isoDayFormatter(snapshot.timezone) : null;
+  const sessionDayOk = (s) => {
+    if (!from) return true;
+    if (!s.startedAt) return false;
+    const d = toDay(s.startedAt);
+    return d >= from && (!to || d <= to);
+  };
 
   return {
     ...snapshot,
-    days: days.filter((d) => projOk(d.project) && (!from || d.day >= from)),
-    sessions: sessions.filter(
-      (s) => projOk(s.project) && (!from || (s.startedAt && toDay(s.startedAt) >= from))
+    days: days.filter(
+      (d) => projOk(d.project) && (!from || d.day >= from) && (!to || d.day <= to)
     ),
+    sessions: sessions.filter((s) => projOk(s.project) && sessionDayOk(s)),
   };
 }
 
@@ -788,6 +802,271 @@ export function sessionRecommendations(session, flags) {
     }
   }
   return recs;
+}
+
+// =========================================================== v1.6 ==========
+// Нові чисті функції (ефективність, патерни, бюджет). Додаються ЛИШЕ
+// доповненням: сигнатури функцій вище не змінюються — на них спирається
+// web/src/print/PrintReport.jsx.
+
+// ------------------------------------------------ ефективність (v1.6 §4) ----
+
+/**
+ * «Вартість одного ходу асистента» по днях + ковзне середнє (CONTRACT v1.6 §4a).
+ * Дні з `messages = 0` пропускаються (ділити нема на що).
+ *
+ * Ковзне середнє ЗВАЖЕНЕ: сума вартості вікна / сума ходів вікна, а не
+ * середнє з відношень — інакше день з одним ходом важив би стільки ж,
+ * скільки день із двома сотнями. Вікно — останні `ma` НАЯВНИХ точок
+ * (порожні дні у снапшот не пишуться); на початку серії вікно неповне,
+ * але значення завжди визначене, щоб лінія не зникала на короткому періоді.
+ *
+ * @param {Array} days снапшот `days`
+ * @param {{ma?:number}} [opts] розмір вікна ковзного середнього (типово 7)
+ * @returns {{rows:Array<{day:string,costUsd:number,messages:number,costPerTurn:number,ma:number}>,
+ *            maWindow:number, avgCostPerTurn:number, totalCostUsd:number, totalMessages:number}}
+ */
+export function costPerTurnSeries(days, { ma = 7 } = {}) {
+  const map = new Map();
+  for (const d of days || []) {
+    if (!d || !d.day) continue;
+    const row = map.get(d.day) || { day: d.day, costUsd: 0, messages: 0 };
+    row.costUsd += d.costUsd || 0;
+    row.messages += d.messages || 0;
+    map.set(d.day, row);
+  }
+  const rows = [...map.values()]
+    .filter((r) => r.messages > 0)
+    .sort((a, b) => (a.day < b.day ? -1 : 1))
+    .map((r) => ({ ...r, costPerTurn: r.costUsd / r.messages, ma: null }));
+
+  const win = Math.max(1, Math.round(ma) || 1);
+  for (let i = 0; i < rows.length; i++) {
+    let c = 0, m = 0;
+    for (let j = Math.max(0, i - win + 1); j <= i; j++) {
+      c += rows[j].costUsd;
+      m += rows[j].messages;
+    }
+    rows[i].ma = m > 0 ? c / m : null;
+  }
+
+  const totalCostUsd = sum(rows, (r) => r.costUsd);
+  const totalMessages = sum(rows, (r) => r.messages);
+  return {
+    rows,
+    maWindow: win,
+    avgCostPerTurn: totalMessages > 0 ? totalCostUsd / totalMessages : 0,
+    totalCostUsd,
+    totalMessages,
+  };
+}
+
+/**
+ * «$ за 1M вихідних токенів» за моделями (CONTRACT v1.6 §4b) — горизонтальні
+ * бари. Це фактична (а не прайсова) ціна виходу: у неї зашита вся вартість
+ * контексту, тому модель із роздутим контекстом виглядає дорожчою за прайс.
+ * Моделі без виходу або без вартості (`<synthetic>`) не потрапляють у список.
+ * @returns {Array<{model:string,costUsd:number,output:number,messages:number,usdPerMTok:number}>} ↓ за usdPerMTok
+ */
+export function costPerOutputMTokByModel(days) {
+  const map = new Map();
+  for (const d of days || []) {
+    if (!d || !d.model) continue;
+    const row = map.get(d.model) || { model: d.model, costUsd: 0, output: 0, messages: 0 };
+    row.costUsd += d.costUsd || 0;
+    row.output += d.output || 0;
+    row.messages += d.messages || 0;
+    map.set(d.model, row);
+  }
+  return [...map.values()]
+    .filter((r) => r.output > 0 && r.costUsd > 0)
+    .map((r) => ({ ...r, usdPerMTok: (r.costUsd / r.output) * 1e6 }))
+    .sort((a, b) => b.usdPerMTok - a.usdPerMTok);
+}
+
+/**
+ * KPI-трійця картки «Ефективність» (CONTRACT v1.6 §4c):
+ * середня вартість сесії, середня вартість ходу, частка кешу в контексті.
+ * Гроші за ходами беруться з `days` (там повний облік), середня сесія —
+ * із `sessions` (там сесії дешевші за $0.01 можуть бути відкинуті колектором,
+ * тож sessionCount ≠ кількість сесій у `days`).
+ * @returns {{avgSessionUsd:number, medianSessionUsd:number, sessionCount:number,
+ *            avgTurnUsd:number, messages:number, totalUsd:number, sessionsUsd:number,
+ *            cacheShare:number, cacheReadTokens:number, contextTokens:number}}
+ */
+export function efficiencyKpis(days, sessions) {
+  let totalUsd = 0, messages = 0;
+  let cacheReadTokens = 0, contextTokens = 0;
+  for (const d of days || []) {
+    totalUsd += d.costUsd || 0;
+    messages += d.messages || 0;
+    const read = d.cacheRead || 0;
+    cacheReadTokens += read;
+    contextTokens += (d.input || 0) + read + (d.cacheWrite5m || 0) + (d.cacheWrite1h || 0);
+  }
+  const costs = (sessions || []).map((s) => (s.totals && s.totals.costUsd) || 0);
+  const sessionsUsd = costs.reduce((a, x) => a + x, 0);
+  const sorted = [...costs].sort((a, b) => a - b);
+  const mid = sorted.length >> 1;
+  const medianSessionUsd = sorted.length
+    ? (sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2)
+    : 0;
+
+  return {
+    avgSessionUsd: costs.length ? sessionsUsd / costs.length : 0,
+    medianSessionUsd,
+    sessionCount: costs.length,
+    sessionsUsd,
+    avgTurnUsd: messages > 0 ? totalUsd / messages : 0,
+    messages,
+    totalUsd,
+    cacheShare: contextTokens > 0 ? cacheReadTokens / contextTokens : 0,
+    cacheReadTokens,
+    contextTokens,
+  };
+}
+
+// -------------------------------------------------- патерни: теплокарта -----
+
+/** Дні тижня, понеділок першим (рядки теплокарти). */
+export const WEEKDAYS_SHORT_UA = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Нд'];
+export const WEEKDAYS_UA = [
+  'понеділок', 'вівторок', 'середа', 'четвер', 'пʼятниця', 'субота', 'неділя',
+];
+
+const EN_WEEKDAY_INDEX = { Mon: 0, Tue: 1, Wed: 2, Thu: 3, Fri: 4, Sat: 5, Sun: 6 };
+
+/** ISO → { weekday: 0..6 (Пн=0), hour: 0..23 } у заданому поясі. */
+function weekdayHourFormatter(timeZone) {
+  let fmt = null;
+  try {
+    fmt = new Intl.DateTimeFormat('en-US', {
+      timeZone, weekday: 'short', hour: '2-digit', hourCycle: 'h23',
+    });
+  } catch {
+    fmt = null; // невалідний пояс → локальний час як запасний варіант
+  }
+  return (iso) => {
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return null;
+    if (!fmt) return { weekday: (d.getDay() + 6) % 7, hour: d.getHours() };
+    let weekday = null, hour = null;
+    for (const part of fmt.formatToParts(d)) {
+      if (part.type === 'weekday') weekday = EN_WEEKDAY_INDEX[part.value];
+      else if (part.type === 'hour') hour = Number(part.value);
+    }
+    if (weekday == null || !Number.isFinite(hour)) return null;
+    return { weekday, hour: hour % 24 };
+  };
+}
+
+/**
+ * Теплокарта «Коли горять гроші» (CONTRACT v1.6 §5): 7 × 24, вартість сесії
+ * віднесена до ГОДИНИ ЇЇ ПОЧАТКУ, переведеної в `timeZone` (Europe/Kyiv) через
+ * Intl — снапшот зберігає startedAt в UTC, а глядач може сидіти будь-де.
+ * Рядок 0 — понеділок (українська тижнева сітка).
+ *
+ * @param {Array} sessions снапшот `sessions`
+ * @param {string} [timeZone='Europe/Kyiv']
+ * @returns {{matrix:number[][], counts:number[][], max:number, min:number, minNonZero:number,
+ *            total:number, sessions:number, skipped:number, timeZone:string,
+ *            peak:{weekday:number,hour:number,costUsd:number,sessions:number}|null,
+ *            byWeekday:number[], byHour:number[],
+ *            weekdays:string[], weekdaysFull:string[]}}
+ */
+export function heatmapWeekdayHour(sessions, timeZone = 'Europe/Kyiv') {
+  const matrix = Array.from({ length: 7 }, () => new Array(24).fill(0));
+  const counts = Array.from({ length: 7 }, () => new Array(24).fill(0));
+  const toWh = weekdayHourFormatter(timeZone);
+  let total = 0, used = 0, skipped = 0;
+
+  for (const s of sessions || []) {
+    const wh = s && s.startedAt ? toWh(s.startedAt) : null;
+    if (!wh) { skipped++; continue; }
+    const cost = (s.totals && s.totals.costUsd) || 0;
+    matrix[wh.weekday][wh.hour] += cost;
+    counts[wh.weekday][wh.hour] += 1;
+    total += cost;
+    used++;
+  }
+
+  let max = 0, min = Infinity, minNonZero = Infinity, peak = null;
+  const byWeekday = new Array(7).fill(0);
+  const byHour = new Array(24).fill(0);
+  for (let w = 0; w < 7; w++) {
+    for (let h = 0; h < 24; h++) {
+      const v = matrix[w][h];
+      byWeekday[w] += v;
+      byHour[h] += v;
+      if (v > max) { max = v; peak = { weekday: w, hour: h, costUsd: v, sessions: counts[w][h] }; }
+      if (v < min) min = v;
+      if (v > 0 && v < minNonZero) minNonZero = v;
+    }
+  }
+
+  return {
+    matrix,
+    counts,
+    max,
+    min: Number.isFinite(min) ? min : 0,
+    minNonZero: Number.isFinite(minNonZero) ? minNonZero : 0,
+    total,
+    sessions: used,
+    skipped,
+    timeZone,
+    peak,
+    byWeekday,
+    byHour,
+    weekdays: WEEKDAYS_SHORT_UA,
+    weekdaysFull: WEEKDAYS_UA,
+  };
+}
+
+// ------------------------------------------------------ бюджет (v1.6 §2) ----
+
+/**
+ * Стан місячного бюджету (CONTRACT v1.6 §2).
+ *  monthCost     — уже витрачено в поточному місяці (cumulativeMonthCompare.curTotal);
+ *  forecastTotal — прогноз на кінець місяця (cumulativeMonthCompare.forecastTotal),
+ *                  null у останній день місяця — тоді все рахується по факту;
+ *  budgetUsd     — бюджет; не задано / ≤ 0 → повертається null (картка ховається).
+ *
+ * `state` — вердикт-чіп: враховує ПРОГНОЗ (у цьому й сенс раннього
+ * попередження: у межах бюджету «сьогодні» ще нічого не означає 10-го числа).
+ * `barState` — колір смуги прогресу, рахується ЛИШЕ за фактом (CONTRACT:
+ * зелений < 80 %, оранжевий 80–100 %, червоний > 100 %).
+ *
+ * @returns {{pct:number, state:'ok'|'edge'|'over', overUsd:number,
+ *            barState:'ok'|'edge'|'over', spentUsd:number, budgetUsd:number,
+ *            forecastTotal:number|null, forecastPct:number|null,
+ *            remainingUsd:number, basisUsd:number}|null}
+ */
+export function budgetStatus({ monthCost = 0, forecastTotal = null, budgetUsd = null } = {}) {
+  const budget = Number(budgetUsd);
+  if (!Number.isFinite(budget) || budget <= 0) return null;
+
+  const spent = Number(monthCost) || 0;
+  const forecast = Number.isFinite(Number(forecastTotal)) && forecastTotal != null
+    ? Number(forecastTotal)
+    : null;
+  const basis = Math.max(spent, forecast == null ? 0 : forecast);
+
+  const pct = (spent / budget) * 100;
+  const barState = pct > 100 ? 'over' : pct >= 80 ? 'edge' : 'ok';
+  const state = basis > budget ? 'over' : basis >= budget * 0.8 ? 'edge' : 'ok';
+
+  return {
+    pct,
+    state,
+    overUsd: Math.max(0, basis - budget),
+    barState,
+    spentUsd: spent,
+    budgetUsd: budget,
+    forecastTotal: forecast,
+    forecastPct: forecast == null ? null : (forecast / budget) * 100,
+    remainingUsd: Math.max(0, budget - spent),
+    basisUsd: basis,
+  };
 }
 
 // ----------------------------------------------------------- морфологія -----

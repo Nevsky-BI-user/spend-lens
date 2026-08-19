@@ -9,8 +9,7 @@ import { analyzeSessions, sessionRecommendations } from '../lib/analytics.js';
 import {
   fmtUsd, fmtTokens, fmtPct, fmtDateTime, fmtInt, shortModel,
 } from '../lib/format.js';
-import { FLAG_META } from '../lib/rules.js';
-import { Card, FlagChip, CopyButton, EmptyState } from './ui.jsx';
+import { Card, FlagChip, CopyButton, EmptyState, FLAG_META_ALL } from './ui.jsx';
 import { useMediaQuery, PHONE_MEDIA } from './charts.jsx';
 
 function ModelMix({ models }) {
@@ -93,7 +92,7 @@ function Drawer({ item, onClose }) {
         )}
         {flags.map((f) => (
           <p className="muted-text" key={`ev-${f.type}`}>
-            <strong>{FLAG_META[f.type]?.label || f.type}:</strong> {f.evidence}
+            <strong>{FLAG_META_ALL[f.type]?.label || f.type}:</strong> {f.evidence}
           </p>
         ))}
 
@@ -183,11 +182,23 @@ function SessionCards({ rows, onSelect }) {
   );
 }
 
-export default function SessionsTab({ snapshot }) {
+export default function SessionsTab({ snapshot, anomalies = null }) {
   const [selected, setSelected] = useState(null);
   const [sort, setSort] = useState({ key: 'cost', dir: 'desc' }); // типово $ ↓
   const isPhone = useMediaQuery(PHONE_MEDIA);
-  const { flagged } = useMemo(() => analyzeSessions(snapshot), [snapshot]);
+  const base = useMemo(() => analyzeSessions(snapshot).flagged, [snapshot]);
+
+  // Аномалія — це вже готовий прапорець ({type:'ANOMALY', wasteUsd:0, evidence}),
+  // рахований на повній історії проєкту; ставимо його першим, бо це сигнал
+  // «подивись сюди», а не оцінка втрат (wasteUsd:0 — навмисно).
+  const anomalyById = anomalies?.sessions?.byId || null;
+  const flagged = useMemo(() => {
+    if (!anomalyById || anomalyById.size === 0) return base;
+    return base.map((it) => {
+      const a = anomalyById.get(it.session.sessionId);
+      return a ? { ...it, flags: [a, ...it.flags] } : it;
+    });
+  }, [base, anomalyById]);
 
   const onSort = (key, alpha) => {
     setSort((s) => (s.key === key

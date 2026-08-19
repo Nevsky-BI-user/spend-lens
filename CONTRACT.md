@@ -217,6 +217,36 @@ Seven features. All UI copy Ukrainian, iOS palette, format.js numbers, responsiv
 
 **7. XLSX export.** Button «Експорт XLSX» in the filter toolbar. Uses `exceljs` **lazy-loaded via dynamic `import()`** (must not enter the main bundle) in `web/src/lib/xlsxExport.js`. Exports the CURRENT slice (period/project/day applied), sheets: «Огляд» (KPI + денні суми), «Проєкти», «Моделі», «Сесії» (усі колонки таблиці + прапорці текстом), «Рекомендації» (правило, проєкт, втрати, промпт). Styling: bold header row with `#F2F2F7` fill, frozen top row, autofilter, column widths, `$#,##0.00` for money, integer format with thousands for tokens, dates as text in Ukrainian format. Filename `spend-lens_{зріз}_{YYYY-MM-DD}.xlsx` where `{зріз}` = project or «усі-проєкти». Download via Blob + temporary anchor; show a brief «Готуємо файл…» state while the chunk loads.
 
+## v1.7 Session & project digests (binding)
+
+Goal: answer «що тут відбувалося» for any session or project WITHOUT calling an LLM — everything is derived deterministically from transcripts. Two lanes: **v1.7a collector/DB** (this section, part A) and **v1.7b UI** (part B, ships after v1.6).
+
+### Part A — collector (`collector/**`, `supabase/migrations/002_*.sql`)
+
+Extract per session while streaming (assistant lines are already JSON.parsed — walk `message.content` blocks):
+- `tools`: histogram of `tool_use` block `name` (keep top 8 + `other` count). Normalize MCP names: `mcp__Claude_Browser__*` → `browser`, `mcp__computer-use__*` → `computer`, keep plain names otherwise.
+- `areas`: top 5 directories from tool inputs `file_path`/`path`/`notebook_path`, normalized to forward slashes and shortened to the last 2 path segments of the DIRECTORY (e.g. `web/src/components`); count occurrences.
+- `edits`: count of Edit/Write/NotebookEdit calls; `filesTouched`: distinct file paths count.
+- `intent`: first user message text, cleaned — strip `<system-reminder>…</system-reminder>`, `<task-notification>…`, `<command-*>` blocks and code fences, collapse whitespace, truncate 200 chars at a word boundary. Empty → null.
+- `activity`: single Ukrainian label from the tool mix, first match wins: browser≥15 % → `перевірка в браузері`; computer≥15 % → `робота з десктопом`; Task/Workflow/Agent≥8 % → `оркестрація агентів`; (Edit+Write)≥25 % → `правки коду`; (Bash+PowerShell)≥35 % → `запуски й перевірки`; (Read+Grep+Glob)≥35 % → `розбір коду`; else `змішана робота`.
+
+Snapshot additions (schemaVersion → **2**, but readers must tolerate v1):
+- `sessions[].digest = {activity, tools:{name:count}, areas:[{path,count}], edits, filesTouched, intent}`
+- NEW top-level `projects[]`: `{project, sessions, sidechainSessions, costUsd, firstDay, lastDay, models:[top3], areas:[{path,count} top5], activities:[{label,count}], titles:[top5 session titles by cost], note}` — `note` comes from optional gitignored `collector/projects.json` (`{"<project>": "ручний опис"}`), else `null`.
+- Session title fix: for `sidechain:true` sessions prefix the derived title with `субагент: ` and build it from the cleaned intent (never the raw brief with paths/instructions); cap 110 chars.
+
+Cache: digests must live in the per-file cache — bump `CACHE_VERSION`. Performance budget: cold full run ≤ 20 s on ~1 900 files (currently ~8 s); report the measured time.
+Supabase: `002_digests.sql` — `alter table sessions_agg add column if not exists digest jsonb`; new table `projects_agg` mirroring `projects[]` (PK project, `note` text, jsonb for arrays), same RLS pattern as existing tables (SELECT for allowlisted authenticated users only). Collector upserts it.
+Safety while testing: use `--out <scratchpad path>` for trial runs; overwrite the real `web/public/data/usage.json` only after the schema is verified.
+
+### Part B — UI (`web/src/**`, print + XLSX)
+
+- NEW tab **«Проєкти»** (between Категорії and Сесії): card per project sorted by cost — назва, `note` or auto-summary sentence («Правки коду · web/src/components, report · 34 сесії · 18.06–19.08»), КПІ (витрати, сесії, частка субагентів), chips of top areas, list of top-5 session titles with cost, button «Показати лише цей проєкт» (sets the global project filter).
+- **Сесії**: second line under the title in the table = `activity · top area · N файлів`; drawer gains a «Що відбувалося» block (activity, areas, tools top-5 as chips, edits/files, duration, `intent` as a quoted paragraph).
+- **PDF**: top-sessions table gains the same one-line digest under the title; daily report gains a compact «Чим займалися» line per project in the projects card (activity label only).
+- **XLSX**: «Сесії» sheet gains columns Активність / Області / Правки / Файли / Запит; new sheet «Проєкти».
+- Snapshot v1 fallback: when `digest`/`projects` are absent, all new UI degrades silently (no empty blocks, no crashes).
+
 ## Privacy (public repo!)
 
 `.gitignore` MUST cover: `web/public/data/usage.json`, `collector/.cache/`, `collector/.env`, `node_modules`, `dist`. No real usage numbers, session titles, client/project names, or `HEAVY_METAL` username in committed files — docs use `%USERPROFILE%`. demo.json = synthetic projects («proj-alpha», «proj-beta»...). README in Ukrainian.

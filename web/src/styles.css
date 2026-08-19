@@ -241,6 +241,8 @@ button { font-family: inherit; }
 .chip-LONG_SESSION   { background: rgba(88, 86, 214, .12);  color: #3d3ba0; }
 .chip-SUBAGENT_HEAVY { background: rgba(50, 173, 230, .12); color: #1a6f99; }
 .chip-TOP_BURNER     { background: rgba(142, 142, 147, .12); color: #59595e; }
+/* v1.6: аномалія — той самий пастельний пар, що й PREMIUM_MODEL (iOS red). */
+.chip-ANOMALY        { background: rgba(255, 59, 48, .12);  color: #c0281e; }
 
 /* ---------------------------------------------------------------- charts --- */
 
@@ -825,6 +827,253 @@ button { font-family: inherit; }
 .denied-card h2 { margin: 0 0 8px; font-size: 18px; color: var(--text); }
 .denied-card .btn-secondary { margin-top: 18px; }
 
+
+/* ============================================================== v1.6 ------
+   Дрил-даун (чіп дня, клікабельний графік), бюджет, аномалії, ефективність,
+   теплокарта, кнопка експорту. Усе — екранний шар; web/src/print/**
+   користується лише карткою бюджету, і їй вистачає цих самих класів. */
+
+/* --- тулбар: чіп активного дня + кнопка експорту --- */
+
+.day-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;          /* ціль дотику (CONTRACT v1.6 §1) */
+  padding: 0 14px;
+  border: none;
+  border-radius: 999px;
+  background: rgba(0, 122, 255, .12);
+  color: #0a5bbf;
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.day-chip:hover { background: rgba(0, 122, 255, .2); }
+.day-chip:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+.day-chip-x { font-size: 12px; opacity: .65; }
+
+.toolbar-btn {
+  min-height: 34px;
+  padding: 8px 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--card);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.toolbar-btn:hover:not(:disabled) { background: #FAFAFC; }
+.toolbar-btn:disabled { color: var(--text-2); cursor: progress; }
+.toolbar-btn:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+
+.toolbar-error { color: var(--red); font-size: 13px; margin: 0 0 10px; }
+
+/* Графік, по якому клікають (дрил-даун день -> сесії). */
+.chart-clickable { cursor: pointer; }
+
+/* --- бюджет місяця --- */
+
+.budget-hint { color: var(--text-2); font-size: 13px; padding: 2px 2px 0; }
+.budget-hint .link-btn { font-size: 13px; }
+
+.budget-top {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.budget-spent { font-size: 17px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.budget-pct { color: var(--text-2); font-weight: 400; }
+
+.budget-verdict {
+  border-radius: 999px;
+  padding: 3px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.budget-verdict.ok   { background: rgba(52, 199, 89, .14);  color: #1c7c3c; }
+.budget-verdict.edge { background: rgba(255, 149, 0, .14);  color: #9d5c00; }
+.budget-verdict.over { background: rgba(255, 59, 48, .12);  color: #c0281e; }
+
+.budget-track {
+  position: relative;
+  height: 10px;
+  margin: 12px 0 10px;
+  border-radius: 999px;
+  background: rgba(118, 118, 128, .12);
+  overflow: hidden;
+}
+
+.budget-fill { display: block; height: 100%; border-radius: 999px; }
+.budget-fill.ok   { background: var(--green); }
+.budget-fill.edge { background: var(--orange); }
+.budget-fill.over { background: var(--red); }
+
+.budget-forecast { margin: 0; font-size: 13px; color: var(--text-2); }
+
+.budget-editor-label { display: block; font-size: 12px; color: var(--text-2); margin-bottom: 6px; }
+.budget-editor-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.budget-editor .muted-text { margin: 8px 0 0; }
+
+.budget-input {
+  width: 140px;
+  min-height: 40px;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--card);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 15px;
+  font-variant-numeric: tabular-nums;
+}
+
+.budget-input:focus { outline: 2px solid var(--blue); border-color: transparent; }
+
+.btn-compact { width: auto; padding: 10px 16px; min-height: 40px; }
+
+/* --- аномалії --- */
+
+.anomaly-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+
+.anomaly-row {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  width: 100%;
+  text-align: left;
+  border: none;
+  background: none;
+  font: inherit;
+  color: inherit;
+  padding: 12px 8px;
+  border-bottom: 1px solid var(--line);
+  border-radius: 10px;
+  cursor: pointer;
+}
+
+.anomaly-row.static { cursor: default; }
+.anomaly-row:not(.static):hover { background: rgba(0, 122, 255, .06); }
+.anomaly-row:focus-visible { outline: 2px solid var(--blue); outline-offset: -2px; }
+.anomaly-list li:last-child .anomaly-row { border-bottom: none; }
+
+.anomaly-head { display: flex; align-items: baseline; gap: 10px; }
+
+.anomaly-kind {
+  border-radius: 999px;
+  padding: 2px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+  background: rgba(255, 59, 48, .12);
+  color: #c0281e;
+}
+
+.anomaly-kind.session { background: rgba(142, 142, 147, .14); color: #59595e; }
+
+/* «No truncation anywhere» (v1.1): назви сесій переносяться, а не обрізаються
+   трикрапкою — на 375px багатослівний заголовок інакше нечитабельний.
+   overflow-wrap: anywhere рятує від довгих беззнакових рядків (шляхи, id). */
+.anomaly-title {
+  font-weight: 600;
+  font-size: 14px;
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.anomaly-cost { font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.anomaly-sub { font-size: 12px; color: var(--text-2); }
+.anomaly-why { font-size: 13px; color: var(--text-2); }
+
+/* --- ефективність --- */
+
+.group-title {
+  margin: 10px 0 -4px;
+  font-size: 13px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .5px;
+  color: var(--text-2);
+}
+
+.kpi-grid-3 { grid-template-columns: repeat(3, 1fr); }
+
+/* --- теплокарта «Коли горять гроші» --- */
+
+/* Скрол ЛИШЕ всередині картки: сторінка горизонтально не їде (CONTRACT v1.4). */
+.heatmap-scroll { overflow-x: auto; padding-bottom: 4px; }
+
+.heatmap {
+  display: grid;
+  grid-template-columns: 34px repeat(24, minmax(26px, 1fr));
+  gap: 2px;
+  min-width: 660px;
+}
+
+.heatmap-corner { min-height: 16px; }
+
+.heatmap-hour {
+  font-size: 10px;
+  color: var(--text-2);
+  text-align: center;
+  line-height: 16px;
+  font-variant-numeric: tabular-nums;
+}
+
+.heatmap-wd {
+  font-size: 11px;
+  color: var(--text-2);
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding-right: 6px;
+}
+
+.heatmap-cell {
+  height: 26px;
+  border-radius: 5px;
+  background: #FFFFFF;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, .04);
+}
+
+.heatmap-cell.zero { background: #F7F7FA; }
+
+.heatmap-legend {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+  font-size: 12px;
+  color: var(--text-2);
+}
+
+.heatmap-legend-label { font-variant-numeric: tabular-nums; }
+
+.heatmap-ramp {
+  flex: 0 1 160px;
+  height: 8px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #FFFFFF, #007AFF);
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, .06);
+}
+
+.heatmap-legend-note { margin-left: 2px; }
+
+.heatmap-card .muted-text { margin: 10px 0 0; }
+
 /* ======================================================= v1.4 responsive ---
    ЛИШЕ @media screen (binding, CONTRACT v1.4): друкований пайплайн
    (print-медіа, фіксовані 766px) цих правил не бачить. web/src/print/** —
@@ -900,12 +1149,38 @@ button { font-family: inherit; }
   .card-actions .segmented { flex: 1 1 auto; }
 
   .proj-bar { min-height: 44px; }
+
+  /* v1.6: кнопки тулбара й редактора бюджету — цілі дотику >=44px. */
+  .toolbar-btn { min-height: 44px; flex: 1 1 auto; }
+
+  .day-chip { flex: 1 1 auto; justify-content: space-between; }
+  .btn-compact { min-height: 44px; }
+  .budget-input { min-height: 44px; flex: 1 1 120px; width: auto; }
+  .anomaly-row { padding: 14px 8px; }
+
+  /* Текстові кнопки-посилання («Змінити», «Задати бюджет», «Показати всі
+     проєкти», «Вийти») лишалися єдиними цілями дотику <44px (v1.4). */
+  .link-btn {
+    display: inline-flex;
+    align-items: center;
+    min-height: 44px;
+    min-width: 44px;
+  }
+
+  /* KPI-трійця «Ефективності» на планшеті — у дві колонки, як решта KPI. */
+  .kpi-grid-3 { grid-template-columns: repeat(2, 1fr); }
 }
 
 /* --- ≤640 (телефон): дровер = повноекранний bottom sheet із липкою шапкою
        (кнопка «Закрити» 44px завжди видима), вертикальна легенда доната. --- */
 @media screen and (max-width: 640px) {
   .kpi-value { font-size: 22px; }
+
+  /* v1.6: теплокарта скролиться всередині картки — 24 години в 375px
+     не влазять за жодних умов, але сторінка лишається без h-скролу. */
+  .heatmap { grid-template-columns: 30px repeat(24, 24px); min-width: 0; }
+  .heatmap-cell { height: 24px; }
+  .heatmap-legend { flex-wrap: wrap; }
 
   .drawer {
     top: 0;

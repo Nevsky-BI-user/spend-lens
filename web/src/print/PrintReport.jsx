@@ -12,6 +12,11 @@
 //             без date — попередня київська доба від «зараз».
 //   monthly — попередній календарний місяць якоря date (без date — від сьогодні).
 //   yearly  — попередній календарний рік якоря date.
+//
+// v1.6 (єдина розморожена правка цього файлу): за наявності ?budget= у звіт
+// додається та сама картка «Бюджет місяця», що й на дашборді — компонент
+// спільний, лише без інлайн-редагування (у PDF кнопки мертві). Для yearly
+// картки немає: місячний бюджет у річному зведенні нічого не означає.
 
 import React, { useEffect, useMemo, useState } from 'react';
 import {
@@ -19,13 +24,15 @@ import {
 } from 'recharts';
 import {
   costByProject, costByModel, dailyByModel, cacheEconomics,
-  analyzeSessions, computeFactors, buildRecommendations,
+  analyzeSessions, computeFactors, buildRecommendations, cumulativeMonthCompare,
 } from '../lib/analytics.js';
+import { parseBudget } from '../lib/urlState.js';
 import { FLAG_META } from '../lib/rules.js';
 import {
   fmtUsd, fmtUsdCompact, fmtTokens, fmtInt, fmtPct, fmtDateTime, shortModel,
 } from '../lib/format.js';
 import { Card, FlagChip } from '../components/ui.jsx';
+import BudgetCard from '../components/BudgetCard.jsx';
 import { GRID, X_PROPS, Y_PROPS, LegendRow, buildModelColors, yAxisWidth } from '../components/charts.jsx';
 import './print.css';
 
@@ -384,6 +391,25 @@ function RecommendationCards({ filtered, limit }) {
   );
 }
 
+/**
+ * Картка бюджету місяця (CONTRACT v1.6 §2) — рахується по ПОВНОМУ снапшоту,
+ * а не по періоду звіту: бюджет місячний, і для денного зведення потрібен
+ * накопичений підсумок місяця станом на день звіту.
+ */
+function BudgetBlock({ snapshot, anchorDay, budgetUsd }) {
+  if (!budgetUsd) return null;
+  const cmp = cumulativeMonthCompare(snapshot.days || [], anchorDay);
+  return (
+    <BudgetCard
+      budgetUsd={budgetUsd}
+      monthCost={cmp.curTotal}
+      forecastTotal={cmp.forecastTotal}
+      month={cmp.month}
+      editable={false}
+    />
+  );
+}
+
 // -------------------------------------------------------- макети звітів ------
 
 function commonKpis(t, tp, period, filtered, { costLabel, withSavings = false, withTopProject = false }) {
@@ -409,7 +435,7 @@ function commonKpis(t, tp, period, filtered, { costLabel, withSavings = false, w
   return kpis;
 }
 
-function DailyReport({ snapshot, period }) {
+function DailyReport({ snapshot, period, budgetUsd }) {
   const cur = filterRange(snapshot, period.from, period.to);
   const prev = filterRange(snapshot, period.prevFrom, period.prevTo);
   const t = sumDays(cur.days);
@@ -418,6 +444,7 @@ function DailyReport({ snapshot, period }) {
   return (
     <>
       <KpiCards kpis={commonKpis(t, tp, period, cur, { costLabel: 'Вартість дня' })} />
+      <BudgetBlock snapshot={snapshot} anchorDay={period.to} budgetUsd={budgetUsd} />
       {!cur.days.length ? (
         <div className="warn-banner">
           За {period.label} даних у снапшоті немає. Схоже, Claude Code цього дня не використовувався
@@ -435,7 +462,7 @@ function DailyReport({ snapshot, period }) {
   );
 }
 
-function MonthlyReport({ snapshot, period }) {
+function MonthlyReport({ snapshot, period, budgetUsd }) {
   const cur = filterRange(snapshot, period.from, period.to);
   const prev = filterRange(snapshot, period.prevFrom, period.prevTo);
   const t = sumDays(cur.days);
@@ -466,6 +493,7 @@ function MonthlyReport({ snapshot, period }) {
       <KpiCards kpis={commonKpis(t, tp, period, cur, {
         costLabel: 'Вартість місяця', withSavings: true, withTopProject: true,
       })} />
+      <BudgetBlock snapshot={snapshot} anchorDay={period.to} budgetUsd={budgetUsd} />
       {!cur.days.length ? (
         <div className="warn-banner">За {period.label} даних у снапшоті немає.</div>
       ) : (
@@ -541,7 +569,7 @@ const LAYOUTS = { daily: DailyReport, monthly: MonthlyReport, yearly: YearlyRepo
 
 // ---------------------------------------------------------------- корінь -----
 
-export default function PrintReport({ type, date }) {
+export default function PrintReport({ type, date, budget = '' }) {
   const [state, setState] = useState({ status: 'loading' });
 
   useEffect(() => {
@@ -561,6 +589,7 @@ export default function PrintReport({ type, date }) {
   }, []);
 
   const period = useMemo(() => computePeriod(type, date), [type, date]);
+  const budgetUsd = useMemo(() => parseBudget(budget), [budget]);
 
   if (state.status === 'loading') {
     return <div className="print-report"><p className="muted-text">Завантаження даних…</p></div>;
@@ -588,7 +617,7 @@ export default function PrintReport({ type, date }) {
         </p>
       </header>
 
-      <Layout snapshot={snapshot} period={period} />
+      <Layout snapshot={snapshot} period={period} budgetUsd={budgetUsd} />
 
       <footer className="print-footer">
         spend-lens · джерело цін: {snapshot.pricingSource === 'litellm' ? 'LiteLLM' : 'вбудована таблиця'}

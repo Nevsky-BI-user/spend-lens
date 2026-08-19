@@ -1,13 +1,14 @@
-// Вкладка «Огляд»: KPI-картки, щоденний stacked bar (за моделями / за
-// проєктами), наростаючий підсумок місяця з порівнянням і прогнозом,
+// Вкладка «Огляд»: KPI-картки, картка бюджету, щоденний stacked bar (за
+// моделями / за проєктами) з дрил-дауном і позначками аномальних днів,
+// картка «Аномалії», наростаючий підсумок місяця з порівнянням і прогнозом,
 // топ проєктів за період із Δ проти попереднього вікна.
 //
 // Дані: `snapshot` — відфільтрований період + проєкт (графік днів, топ проєктів);
-// `kpiDays` — лише фільтр проєкту (KPI та місячна картка тримають свої вікна).
+// `kpiDays` — лише фільтр проєкту (KPI, бюджет і місячна картка тримають свої вікна).
 
 import React, { useMemo, useState } from 'react';
 import {
-  ResponsiveContainer, BarChart, Bar, LineChart, Line,
+  ResponsiveContainer, ComposedChart, Bar, LineChart, Line,
   XAxis, YAxis, CartesianGrid, Tooltip,
 } from 'recharts';
 import {
@@ -18,6 +19,8 @@ import {
   fmtUsd, fmtUsdCompact, fmtDayShort, fmtDomMonth, fmtPct, monthName, shortModel,
 } from '../lib/format.js';
 import { Card, Segmented, EmptyState } from './ui.jsx';
+import BudgetCard from './BudgetCard.jsx';
+import AnomaliesCard from './AnomaliesCard.jsx';
 import {
   GRID, X_PROPS, Y_PROPS, ChartTooltip, LegendRow,
   buildModelColors, buildSeriesColors, useChartHeight,
@@ -25,6 +28,7 @@ import {
 
 const BLUE = '#007AFF';
 const GRAY = '#8E8E93';
+const RED = '#FF3B30';
 
 function KpiCards({ days, anchorDay }) {
   const kpis = useMemo(() => computeKpis(days, anchorDay), [days, anchorDay]);
@@ -56,8 +60,16 @@ const SPLIT_OPTIONS = [
 // Скільки проєктів лишаються окремими серіями; решта — «Інші» (CONTRACT v1.5).
 const TOP_PROJECTS = 6;
 
+/** Червона крапка над стовпчиком аномального дня (CONTRACT v1.6 §3). */
+function AnomalyDot({ cx, cy, payload }) {
+  if (cx == null || cy == null || payload?.anomalyMark == null) return null;
+  return (
+    <circle cx={cx} cy={cy - 9} r={4} fill={RED} stroke="#FFFFFF" strokeWidth={1.5} />
+  );
+}
+
 /** Stacked bar витрат за днями з перемикачем розбивки (моделі / проєкти). */
-function DailyCard({ days, height }) {
+function DailyCard({ days, height, anomalies, onSelectDay }) {
   const [splitBy, setSplitBy] = useState('models');
   const byModel = useMemo(() => dailyByModel(days), [days]);
   const byProject = useMemo(() => dailyByProject(days, { topN: TOP_PROJECTS }), [days]);
@@ -65,23 +77,38 @@ function DailyCard({ days, height }) {
   const projColors = useMemo(() => buildSeriesColors(byProject.projects), [byProject.projects]);
 
   const isModels = splitBy === 'models';
-  const rows = isModels ? byModel.rows : byProject.rows;
+  const baseRows = isModels ? byModel.rows : byProject.rows;
   const keys = isModels ? byModel.models : byProject.projects;
   const colors = isModels ? modelColors : projColors;
+
+  // Позначка аномалії — денна сума з детектора (він рахує на повній історії,
+  // а не на видимому вікні), тож крапка стоїть рівно на вершині стовпчика.
+  const byDay = anomalies?.days?.byDay;
+  const flagged = anomalies?.days?.flaggedDays;
+  const rows = useMemo(() => {
+    if (!flagged || flagged.size === 0) return baseRows;
+    return baseRows.map((r) => ({
+      ...r,
+      anomalyMark: flagged.has(r.day) ? (byDay.get(r.day)?.costUsd ?? null) : null,
+    }));
+  }, [baseRows, flagged, byDay]);
+  const hasAnomalyInView = rows.some((r) => r.anomalyMark != null);
   // Назва серії: моделі скорочуємо (claude-fable-5 → fable-5), проєкти — як є.
   const nameOf = isModels ? shortModel : (k) => k;
   // Про «Інші» згадуємо лише тоді, коли така серія справді є: при фільтрі на
   // один проєкт (або коли проєктів ≤ topN) обіцяти її було б неправдою.
   const hasOther = byProject.projects.includes(OTHER_PROJECT);
 
+  const baseSubtitle = isModels
+    ? 'Вартість за моделями за вибраний період'
+    : hasOther
+      ? `Вартість за проєктами за вибраний період: топ-${TOP_PROJECTS}, решта — «${OTHER_PROJECT}»`
+      : 'Вартість за проєктами за вибраний період';
+
   return (
     <Card
       title="Витрати за днями"
-      subtitle={isModels
-        ? 'Вартість за моделями за вибраний період'
-        : hasOther
-          ? `Вартість за проєктами за вибраний період: топ-${TOP_PROJECTS}, решта — «${OTHER_PROJECT}»`
-          : 'Вартість за проєктами за вибраний період'}
+      subtitle={onSelectDay ? `${baseSubtitle} · клік по стовпчику покаже сесії того дня` : baseSubtitle}
       actions={
         <Segmented
           options={SPLIT_OPTIONS}
@@ -91,30 +118,63 @@ function DailyCard({ days, height }) {
         />
       }
     >
-      <ResponsiveContainer width="100%" height={height(280)}>
-        <BarChart data={rows} barCategoryGap="28%" margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
-          <CartesianGrid {...GRID} />
-          <XAxis dataKey="day" {...X_PROPS} tickFormatter={fmtDayShort} minTickGap={28} />
-          <YAxis {...Y_PROPS} tickFormatter={fmtUsdCompact} />
-          <Tooltip
-            cursor={{ fill: 'rgba(0,0,0,0.04)' }}
-            content={<ChartTooltip labelFormatter={fmtDayShort} nameFormatter={nameOf} />}
-          />
-          {keys.map((k, i) => (
-            <Bar
-              key={k}
-              dataKey={k}
-              stackId="cost"
-              fill={colors.get(k)}
-              stroke="#FFFFFF"
-              strokeWidth={1}
-              maxBarSize={24}
-              radius={i === keys.length - 1 ? [6, 6, 0, 0] : 0}
+      <div className={onSelectDay ? 'chart-clickable' : undefined}>
+        <ResponsiveContainer width="100%" height={height(280)}>
+          <ComposedChart
+            data={rows}
+            barCategoryGap="28%"
+            margin={{ top: 12, right: 8, left: 0, bottom: 0 }}
+            onClick={(e) => {
+              // activeLabel — значення dataKey осі X (день) у клікнутій категорії;
+              // це надійніше за onClick на кожному <Bar>, бо ловить і кліки
+              // повз сам стовпчик (на телефоні влучити в 24px непросто).
+              if (onSelectDay && e && e.activeLabel) onSelectDay(e.activeLabel);
+            }}
+          >
+            <CartesianGrid {...GRID} />
+            <XAxis dataKey="day" {...X_PROPS} tickFormatter={fmtDayShort} minTickGap={28} />
+            <YAxis {...Y_PROPS} tickFormatter={fmtUsdCompact} />
+            <Tooltip
+              cursor={{ fill: 'rgba(0,0,0,0.04)' }}
+              content={<ChartTooltip labelFormatter={fmtDayShort} nameFormatter={nameOf} />}
             />
-          ))}
-        </BarChart>
-      </ResponsiveContainer>
-      <LegendRow items={keys.map((k) => ({ label: nameOf(k), color: colors.get(k) }))} />
+            {keys.map((k, i) => (
+              <Bar
+                key={k}
+                dataKey={k}
+                stackId="cost"
+                fill={colors.get(k)}
+                stroke="#FFFFFF"
+                strokeWidth={1}
+                maxBarSize={24}
+                radius={i === keys.length - 1 ? [6, 6, 0, 0] : 0}
+              />
+            ))}
+            {/* Лінія-носій для крапок аномалій: сама лінія невидима, значення
+                дорівнює вершині стека, тож домен осі Y не зсувається. */}
+            {hasAnomalyInView && (
+              <Line
+                type="linear"
+                dataKey="anomalyMark"
+                name="anomalyMark"
+                stroke="none"
+                legendType="none"
+                tooltipType="none"
+                connectNulls={false}
+                isAnimationActive={false}
+                dot={<AnomalyDot />}
+                activeDot={false}
+              />
+            )}
+          </ComposedChart>
+        </ResponsiveContainer>
+      </div>
+      <LegendRow
+        items={[
+          ...keys.map((k) => ({ label: nameOf(k), color: colors.get(k) })),
+          ...(hasAnomalyInView ? [{ label: 'аномальний день', color: RED }] : []),
+        ]}
+      />
     </Card>
   );
 }
@@ -125,12 +185,9 @@ function DailyCard({ days, height }) {
 const TIP_ORDER = { cur: 0, forecast: 1, prev: 2 };
 const SERIES_NAMES = { cur: 'цей місяць', forecast: 'прогноз', prev: 'минулий місяць' };
 
-/** Наростаючий підсумок місяця: факт + минулий місяць + прогноз до кінця. */
-function CumulativeCard({ kpiDays, anchorDay, height }) {
-  const cmp = useMemo(
-    () => cumulativeMonthCompare(kpiDays, anchorDay),
-    [kpiDays, anchorDay]
-  );
+/** Наростаючий підсумок місяця: факт + минулий місяць + прогноз до кінця.
+ *  `cmp` рахує корінь вкладки — ті самі числа потрібні картці бюджету. */
+function CumulativeCard({ cmp, height }) {
   const label = monthName(cmp.month);
   const subtitle = cmp.forecastTotal != null
     ? `Прогноз на кінець місяця: ${fmtUsd(cmp.forecastTotal)} · минулий місяць: ${fmtUsd(cmp.prevTotal)}`
@@ -259,22 +316,44 @@ function TopProjectsCard({ days, kpiDays, period, project, anchorDay, onSelectPr
 }
 
 export default function OverviewTab({
-  snapshot, kpiDays, anchorDay, period = 0, project = null, onSelectProject,
+  snapshot, kpiDays, anchorDay, period = 0, project = null,
+  anomalies = null, budgetUsd = null, onBudgetChange,
+  onSelectProject, onSelectDay,
 }) {
   const days = snapshot.days || [];
   // kpiDays — лише фільтр проєкту: місячна картка мусить бачити ВЕСЬ місяць,
   // інакше при періоді «7 днів» наростаючий підсумок обрізався (BUGFIX v1.5).
   const monthDays = kpiDays && kpiDays.length ? kpiDays : days;
   const h = useChartHeight(); // v1.4: ≤768px висоти графіків −15%
+  const cmp = useMemo(
+    () => cumulativeMonthCompare(monthDays, anchorDay),
+    [monthDays, anchorDay]
+  );
 
   return (
     <>
       <KpiCards days={monthDays} anchorDay={anchorDay} />
 
-      <DailyCard days={days} height={h} />
+      <BudgetCard
+        budgetUsd={budgetUsd}
+        monthCost={cmp.curTotal}
+        forecastTotal={cmp.forecastTotal}
+        month={cmp.month}
+        onChange={onBudgetChange}
+      />
+
+      <DailyCard days={days} height={h} anomalies={anomalies} onSelectDay={onSelectDay} />
+
+      <AnomaliesCard
+        anomalies={anomalies}
+        days={days}
+        sessions={snapshot.sessions || []}
+        timeZone={snapshot.timezone}
+        onSelectDay={onSelectDay}
+      />
 
       <div className="grid-2">
-        <CumulativeCard kpiDays={monthDays} anchorDay={anchorDay} height={h} />
+        <CumulativeCard cmp={cmp} height={h} />
         <TopProjectsCard
           days={days}
           kpiDays={monthDays}

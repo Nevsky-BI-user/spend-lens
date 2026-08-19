@@ -2,14 +2,20 @@
 # PRIVACY-CRITICAL (public repo): real usage data must NEVER be committed
 # =====================================================================
 
-# Local usage snapshot produced by the collector (real spend/session data)
-web/public/data/usage.json
+# Local usage snapshot produced by the collector (real spend/session data).
+# Basename rule (matches in EVERY directory): `vite build --outDir <dir>` copies
+# web/public/ verbatim, so ANY alternate outDir (web/dist-sb, web/dist-test, ...)
+# holds a full copy of the real snapshot.
+usage.json
 
 # Collector per-file cache, LiteLLM pricing cache, run logs
 collector/.cache/
 
 # Collector secrets (Supabase service role key). .env.example IS committed.
 collector/.env
+
+# Manual project notes (v1.7a): real project names/descriptions. projects.example.json IS committed.
+collector/projects.json
 
 # v1.2 report module: generated PDF digests and SMTP secrets. .env.example IS committed.
 report/out/
@@ -25,7 +31,8 @@ report/.env
 # =====================================================================
 node_modules/
 dist/
-web/dist/
+dist-*/
+web/dist*/
 
 # =====================================================================
 # Logs, editor and OS junk

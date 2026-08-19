@@ -3,7 +3,11 @@
 
 import React, { useState } from 'react';
 import { FLAG_META } from '../lib/rules.js';
+import { withAnomalyFlag } from '../lib/anomalies.js';
 import { fmtUsd } from '../lib/format.js';
+
+/** FLAG_META + ANOMALY (v1.6): rules.js лишається недоторканим. */
+export const FLAG_META_ALL = withAnomalyFlag(FLAG_META);
 
 /**
  * Картка. `actions` (v1.5, необов’язковий) — керування праворуч від заголовка
@@ -32,7 +36,7 @@ export function Card({ title, subtitle, children, className = '', actions = null
 
 /** Пастельний чіп прапорця (iOS-бейдж). */
 export function FlagChip({ type, wasteUsd = null }) {
-  const meta = FLAG_META[type] || { label: type };
+  const meta = FLAG_META_ALL[type] || { label: type };
   return (
     <span className={`chip chip-${type}`}>
       {meta.label}
@@ -105,6 +109,41 @@ export function ProjectSelect({ projects, value, onChange }) {
         ))}
       </select>
     </span>
+  );
+}
+
+/**
+ * Знімний чіп активного дня-дрилдауну в тулбарі (CONTRACT v1.6 §1).
+ * Уся пігулка — одна кнопка «скинути»: ціль дотику ≥44px, як вимагає контракт,
+ * і не треба ловити хрестик 12×12.
+ */
+export function DayChip({ label, onClear }) {
+  return (
+    <button
+      type="button"
+      className="day-chip"
+      onClick={onClear}
+      title="Скинути фільтр за днем"
+      aria-label={`Активний фільтр за день: ${label}. Скинути`}
+    >
+      <span className="day-chip-label">{label}</span>
+      <span className="day-chip-x" aria-hidden="true">✕</span>
+    </button>
+  );
+}
+
+/** Кнопка тулбара «Експорт XLSX» зі станом «Готуємо файл…» (CONTRACT v1.6 §7). */
+export function ExportButton({ busy, onClick, error = null }) {
+  return (
+    <button
+      type="button"
+      className={`toolbar-btn${busy ? ' busy' : ''}`}
+      onClick={onClick}
+      disabled={busy}
+      title={error || 'Вивантажити поточний зріз у XLSX'}
+    >
+      {busy ? 'Готуємо файл…' : 'Експорт XLSX'}
+    </button>
   );
 }
 
