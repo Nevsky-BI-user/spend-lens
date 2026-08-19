@@ -12,9 +12,10 @@
 // Снапшот schemaVersion 1 (без digest/projects) → чесний порожній стан
 // «Оновіть дані колектором», а не порожні картки.
 
-import React, { useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import { buildProjectCards, projectSummary, hasDigestData } from '../lib/digest.js';
-import { plural } from '../lib/analytics.js';
+import { plural, groupSmallProjects } from '../lib/analytics.js';
+import { SMALL_PROJECT_USD } from '../lib/rules.js';
 import { fmtUsd, fmtInt, fmtPct } from '../lib/format.js';
 import { Card, EmptyState } from './ui.jsx';
 import { SERIES } from './charts.jsx';
@@ -136,6 +137,43 @@ function ProjectCard({ card, selected, onSelectProject }) {
   );
 }
 
+/**
+ * Зведена картка дрібних проєктів (CONTRACT v1.8 §3): «Інші — N проєктів»,
+ * сірий тон, список назв із сумами і перемикач «Показати всі».
+ */
+function OtherProjectsCard({ group, onExpand }) {
+  return (
+    <Card className="project-card project-card-other">
+      <div className="project-head">
+        <h3 className="project-name">{group.otherLabel}</h3>
+        <span className="project-share">{fmtUsd(group.otherUsd)}</span>
+      </div>
+      <p className="project-summary">
+        Кожен із них коштував менше за {fmtUsd(SMALL_PROJECT_USD)} у цьому зрізі,
+        тож вони зведені в один рядок.
+      </p>
+      <ul className="other-projects">
+        {group.small.map((c) => (
+          <li key={c.project}>
+            <span className="other-project-name">{c.project}</span>
+            <span className="other-project-cost">{fmtUsd(c.costUsd)}</span>
+          </li>
+        ))}
+      </ul>
+      <div className="project-actions">
+        <button
+          type="button"
+          className="btn-secondary btn-compact"
+          onClick={onExpand}
+          aria-expanded="false"
+        >
+          Показати всі
+        </button>
+      </div>
+    </Card>
+  );
+}
+
 export default function ProjectsTab({
   snapshot, project = null, shareTotalUsd = null, onSelectProject = () => {},
 }) {
@@ -147,6 +185,10 @@ export default function ProjectsTab({
     [snapshot, shareTotalUsd]
   );
   const hasDigests = useMemo(() => hasDigestData(snapshot), [snapshot]);
+  // v1.8 §3: дрібні проєкти згортаються в одну сіру картку. Стан локальний
+  // для вкладки — фільтр у тулбарі й адреса від нього не залежать.
+  const group = useMemo(() => groupSmallProjects(cards), [cards]);
+  const [expanded, setExpanded] = useState(false);
 
   if (!hasDigests) {
     return (
@@ -157,16 +199,41 @@ export default function ProjectsTab({
     return <EmptyState text="Немає проєктів за вибраний період." />;
   }
 
+  const collapsed = group.grouped && !expanded;
+  const visible = collapsed ? group.rows.filter((c) => !c.isOther) : cards;
+
   return (
-    <div className="projects-grid">
-      {cards.map((c) => (
-        <ProjectCard
-          key={c.project}
-          card={c}
-          selected={project === c.project}
-          onSelectProject={onSelectProject}
-        />
-      ))}
-    </div>
+    <>
+      {group.grouped && (
+        <div className="projects-toolbar">
+          <span className="muted-text">
+            {collapsed
+              ? `Показано ${visible.length} ${plural(visible.length, 'проєкт', 'проєкти', 'проєктів')} із ${cards.length}; решта — у «Інших».`
+              : `Показано всі ${cards.length} ${plural(cards.length, 'проєкт', 'проєкти', 'проєктів')}.`}
+          </span>
+          <button
+            type="button"
+            className="btn-secondary btn-compact"
+            onClick={() => setExpanded((v) => !v)}
+            aria-expanded={expanded}
+          >
+            {expanded ? 'Згорнути дрібні' : 'Показати всі'}
+          </button>
+        </div>
+      )}
+      <div className="projects-grid">
+        {visible.map((c) => (
+          <ProjectCard
+            key={c.project}
+            card={c}
+            selected={project === c.project}
+            onSelectProject={onSelectProject}
+          />
+        ))}
+        {collapsed && (
+          <OtherProjectsCard group={group} onExpand={() => setExpanded(true)} />
+        )}
+      </div>
+    </>
   );
 }

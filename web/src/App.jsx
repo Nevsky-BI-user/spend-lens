@@ -8,7 +8,8 @@ import { resolveMode, loadLocalSnapshot, loadDemoSnapshot } from './lib/loadData
 import {
   filterSnapshot, projectsByCost, lastDay, cumulativeMonthCompare,
 } from './lib/analytics.js';
-import { detectAnomalies } from './lib/anomalies.js';
+import { detectDayAnomalies } from './lib/anomalies.js';
+import { analyzeReturn } from './lib/efficiency.js';
 import { parseUrlState, writeUrlState, writeStoredBudget } from './lib/urlState.js';
 import { exportSnapshotXlsx } from './lib/xlsxExport.js';
 import { fmtDateTime, fmtDomMonth } from './lib/format.js';
@@ -193,12 +194,19 @@ function Dashboard() {
     () => (snapshot ? lastDay(snapshot.days || []) : ''),
     [snapshot]
   );
-  // Аномалії рахуємо на ПОВНІЙ історії проєкту: ковзне вікно 30 днів і медіана
-  // сесій проєкту вимагають бази, якої у вузькому зрізі просто немає.
-  const anomalies = useMemo(
-    () => (projectOnly ? detectAnomalies(projectOnly) : null),
-    [projectOnly]
-  );
+  // Віддача й аномальні дні рахуються на ПОВНІЙ історії проєкту: медіани
+  // ставок і ковзне вікно 30 днів вимагають бази, якої у вузькому зрізі немає.
+  // v1.8: сесії більше не порівнюються за абсолютною сумою — лише за ціною
+  // одиниці роботи (efficiency.js); денна детекція лишилась, але її доказ
+  // теж став відносним (їй передаємо денні ставки).
+  const returns = useMemo(() => {
+    if (!projectOnly) return null;
+    const r = analyzeReturn(projectOnly);
+    return {
+      ...r,
+      days: detectDayAnomalies(projectOnly.days || [], { dayRates: r.dayRates.byDay }),
+    };
+  }, [projectOnly]);
   const monthCmp = useMemo(
     () => (projectOnly ? cumulativeMonthCompare(projectOnly.days, anchorDay) : null),
     [projectOnly, anchorDay]
@@ -271,17 +279,17 @@ function Dashboard() {
         day,
         budgetUsd: budget,
         forecastTotal: monthCmp ? monthCmp.forecastTotal : null,
-        // Ті самі аномалії, що й у таблиці «Сесій»: рахувати їх ще раз на
-        // вузькому зрізі означало б віддати файл, де чіпа «Аномалія» немає,
-        // хоча на екрані він є (медіана проєкту й guard ≥8 точок на зрізі інші).
-        sessionAnomalies: anomalies ? anomalies.sessions : null,
+        // Ті самі прапорці «Слабка віддача», що й у таблиці «Сесій»: рахувати
+        // їх ще раз на вузькому зрізі означало б віддати файл, де чіпа немає,
+        // хоча на екрані він є (медіани ставок на зрізі інші).
+        sessionReturns: returns ? returns.byId : null,
       });
     } catch (e) {
       setExportError(e.message || 'не вдалося зібрати файл');
     } finally {
       setExportBusy(false);
     }
-  }, [filtered, project, period, day, budget, monthCmp, anomalies]);
+  }, [filtered, project, period, day, budget, monthCmp, returns]);
 
   // --- стани без даних ---
   if (state.status === 'loading') {
@@ -384,8 +392,8 @@ function Dashboard() {
 
       <main className="app-main">
         {/* kpiDays, anchorDay, period, project, budget і обробники кліків
-            використовує переважно «Огляд»; «Сесії» беруть anomalies для чіпа
-            «Аномалія»; «Проєкти» — shareTotalUsd як базу часток. Решта
+            використовує переважно «Огляд»; «Сесії» беруть returns для чіпа
+            «Слабка віддача»; «Проєкти» — shareTotalUsd як базу часток. Решта
             вкладок зайві пропси ігнорує. */}
         <ActiveTab
           snapshot={filtered}
@@ -394,7 +402,7 @@ function Dashboard() {
           period={period}
           project={project}
           day={day}
-          anomalies={anomalies}
+          returns={returns}
           shareTotalUsd={periodTotalUsd}
           budgetUsd={budget}
           onBudgetChange={setBudget}

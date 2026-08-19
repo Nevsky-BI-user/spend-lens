@@ -389,16 +389,6 @@ button { font-family: inherit; }
 }
 
 .split-main { background: var(--blue); }
-.split-side { background: var(--teal); }
-
-.split-legend {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  font-size: 13px;
-}
-
-.split-legend .dot { margin-right: 4px; }
 
 /* ---------------------------------------------------------------- table --- */
 
@@ -949,7 +939,8 @@ button { font-family: inherit; }
 
 .budget-input:focus { outline: 2px solid var(--blue); border-color: transparent; }
 
-.btn-compact { width: auto; padding: 10px 16px; min-height: 40px; }
+/* Ціль дотику >=44px на БУДЬ-ЯКІЙ ширині (CONTRACT §3 не має обмеження за шириною). */
+.btn-compact { width: auto; padding: 10px 16px; min-height: 44px; }
 
 /* --- аномалії --- */
 
@@ -1004,6 +995,193 @@ button { font-family: inherit; }
 .anomaly-cost { font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .anomaly-sub { font-size: 12px; color: var(--text-2); }
 .anomaly-why { font-size: 13px; color: var(--text-2); }
+
+/* ====================================================== v1.8: віддача ====== */
+
+/* Підзаголовок секції ВСЕРЕДИНІ картки (дні у «Слабкій віддачі», ранг
+   субагентів, блоки картки «Віддача на витрачене»). Той самий вигляд, що й
+   .drawer-section, але без залежності від дровера. */
+.card-section {
+  margin: 18px 0 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-2);
+}
+
+/* Клас сесії («правки» / «аналіз») у списку — нейтральний сірий бейдж;
+   червоний лишається за днями-сплесками. */
+.anomaly-kind.session { text-transform: none; }
+
+/* --- картка «Основні проти субагентів» (v1.8 §4) --- */
+
+/* Субагенти — помаранчеві: #32ADE6 поруч із #007AFF читався як один колір. */
+.split-side { background: var(--orange); }
+
+.split-figure { margin: 6px 0 2px; }
+
+.split-figure-value {
+  display: block;
+  font-size: 34px;
+  font-weight: 700;
+  letter-spacing: -0.8px;
+  line-height: 1.1;
+  color: var(--orange);
+}
+
+.split-figure-caption {
+  display: block;
+  font-size: 13px;
+  color: var(--text-2);
+  margin-top: 2px;
+}
+
+.side-rank {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.side-rank-head { display: flex; align-items: baseline; gap: 10px; }
+
+.side-rank-name {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+
+.side-rank-nums {
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.side-rank-track {
+  display: block;
+  height: 8px;
+  margin-top: 5px;
+  border-radius: 999px;
+  background: var(--line);
+  overflow: hidden;
+}
+
+.side-rank-fill { display: block; height: 100%; border-radius: 999px; background: var(--orange); }
+
+/* --- картка «Віддача на витрачене» (v1.8 §1) --- */
+
+.return-kpis {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+  margin: 4px 0 2px;
+}
+
+.return-kpis > div { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.return-kpis span { font-size: 12px; color: var(--text-2); }
+.return-kpis strong { font-size: 22px; font-weight: 700; letter-spacing: -0.3px; }
+.return-kpis em { font-style: normal; font-size: 12px; color: var(--text-2); }
+
+.return-sessions {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.return-sessions li {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.return-sessions li:last-child { border-bottom: none; }
+
+.return-session-head { display: flex; align-items: baseline; gap: 10px; }
+
+.return-session-title {
+  flex: 1;
+  min-width: 0;
+  font-weight: 600;
+  font-size: 14px;
+  overflow-wrap: anywhere;
+}
+
+.return-session-cost {
+  font-weight: 700;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.return-session-sub { font-size: 12px; color: var(--text-2); }
+.return-session-why { font-size: 13px; color: var(--text-2); }
+
+/* --- дрібні проєкти (v1.8 §3) --- */
+
+.projects-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: -4px;
+}
+
+.projects-toolbar .muted-text { margin: 0; }
+
+/* Зведена картка «Інші — N проєктів» — сіра, як і зведений бар на графіках. */
+.project-card-other { background: #FAFAFC; }
+.project-card-other .project-name { color: var(--text-2); }
+
+.other-projects {
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.other-projects li {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 7px 0;
+  border-bottom: 1px solid var(--line);
+  font-size: 13px;
+}
+
+.other-projects li:last-child { border-bottom: none; }
+.other-project-name { min-width: 0; overflow-wrap: anywhere; }
+
+.other-project-cost {
+  font-weight: 600;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Чіп «Слабка віддача» — той самий пастельний червоний, що й аномалія дня. */
+.chip-LOW_RETURN { background: rgba(255, 59, 48, .12); color: #c0281e; }
+
+/* v1.8: висота рядка таблиці «Сесій». Чіпи стакались по одному в стовпчик
+   (~162px на рядок), бо повні назви прапорців ширші за колонку 16 %. У ТАБЛИЦІ
+   (і тільки в ній) чіп отримує коротку назву й компактні відступи — тепер їх
+   стає по два в ряд. Повна назва лишається в title, у дровері та в картках
+   на телефоні, тож нічого не втрачено, а ширини колонок незмінні. */
+.cell-flags .chip-row { gap: 5px; }
+
+.cell-flags .chip {
+  font-size: 11px;
+  padding: 2px 8px;
+  line-height: 1.45;
+}
 
 /* --- ефективність --- */
 
@@ -1318,7 +1496,6 @@ button { font-family: inherit; }
   .toolbar-btn { min-height: 44px; flex: 1 1 auto; }
 
   .day-chip { flex: 1 1 auto; justify-content: space-between; }
-  .btn-compact { min-height: 44px; }
   .budget-input { min-height: 44px; flex: 1 1 120px; width: auto; }
   .anomaly-row { padding: 14px 8px; }
 
@@ -1333,6 +1510,8 @@ button { font-family: inherit; }
 
   /* KPI-трійця «Ефективності» на планшеті — у дві колонки, як решта KPI. */
   .kpi-grid-3 { grid-template-columns: repeat(2, 1fr); }
+  .return-kpis { grid-template-columns: 1fr; gap: 10px; }
+  .projects-toolbar .btn-compact { flex: 1 1 auto; }
 }
 
 /* --- ≤640 (телефон): дровер = повноекранний bottom sheet із липкою шапкою

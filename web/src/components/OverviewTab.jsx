@@ -1,7 +1,8 @@
 // Вкладка «Огляд»: KPI-картки, картка бюджету, щоденний stacked bar (за
 // моделями / за проєктами) з дрил-дауном і позначками аномальних днів,
-// картка «Аномалії», наростаючий підсумок місяця з порівнянням і прогнозом,
-// топ проєктів за період із Δ проти попереднього вікна.
+// наростаючий підсумок місяця з порівнянням і прогнозом, топ проєктів за
+// період із Δ проти попереднього вікна і — ОСТАННЬОЮ (CONTRACT v1.8 §2) —
+// картка «Слабка віддача».
 //
 // Дані: `snapshot` — відфільтрований період + проєкт (графік днів, топ проєктів);
 // `kpiDays` — лише фільтр проєкту (KPI, бюджет і місячна картка тримають свої вікна).
@@ -20,7 +21,7 @@ import {
 } from '../lib/format.js';
 import { Card, Segmented, EmptyState } from './ui.jsx';
 import BudgetCard from './BudgetCard.jsx';
-import AnomaliesCard from './AnomaliesCard.jsx';
+import LowReturnCard from './LowReturnCard.jsx';
 import {
   GRID, X_PROPS, Y_PROPS, ChartTooltip, LegendRow,
   buildModelColors, buildSeriesColors, useChartHeight,
@@ -69,7 +70,7 @@ function AnomalyDot({ cx, cy, payload }) {
 }
 
 /** Stacked bar витрат за днями з перемикачем розбивки (моделі / проєкти). */
-function DailyCard({ days, height, anomalies, onSelectDay }) {
+function DailyCard({ days, height, returns, onSelectDay }) {
   const [splitBy, setSplitBy] = useState('models');
   const byModel = useMemo(() => dailyByModel(days), [days]);
   const byProject = useMemo(() => dailyByProject(days, { topN: TOP_PROJECTS }), [days]);
@@ -83,8 +84,8 @@ function DailyCard({ days, height, anomalies, onSelectDay }) {
 
   // Позначка аномалії — денна сума з детектора (він рахує на повній історії,
   // а не на видимому вікні), тож крапка стоїть рівно на вершині стовпчика.
-  const byDay = anomalies?.days?.byDay;
-  const flagged = anomalies?.days?.flaggedDays;
+  const byDay = returns?.days?.byDay;
+  const flagged = returns?.days?.flaggedDays;
   const rows = useMemo(() => {
     if (!flagged || flagged.size === 0) return baseRows;
     return baseRows.map((r) => ({
@@ -317,7 +318,7 @@ function TopProjectsCard({ days, kpiDays, period, project, anchorDay, onSelectPr
 
 export default function OverviewTab({
   snapshot, kpiDays, anchorDay, period = 0, project = null,
-  anomalies = null, budgetUsd = null, onBudgetChange,
+  returns = null, budgetUsd = null, onBudgetChange,
   onSelectProject, onSelectDay,
 }) {
   const days = snapshot.days || [];
@@ -342,15 +343,7 @@ export default function OverviewTab({
         onChange={onBudgetChange}
       />
 
-      <DailyCard days={days} height={h} anomalies={anomalies} onSelectDay={onSelectDay} />
-
-      <AnomaliesCard
-        anomalies={anomalies}
-        days={days}
-        sessions={snapshot.sessions || []}
-        timeZone={snapshot.timezone}
-        onSelectDay={onSelectDay}
-      />
+      <DailyCard days={days} height={h} returns={returns} onSelectDay={onSelectDay} />
 
       <div className="grid-2">
         <CumulativeCard cmp={cmp} height={h} />
@@ -363,6 +356,16 @@ export default function OverviewTab({
           onSelectProject={onSelectProject}
         />
       </div>
+
+      {/* CONTRACT v1.8 §2: розбір «де віддача слабка» — в самий низ сторінки,
+          після грошей і трендів. */}
+      <LowReturnCard
+        returns={returns}
+        days={days}
+        sessions={snapshot.sessions || []}
+        timeZone={snapshot.timezone}
+        onSelectDay={onSelectDay}
+      />
     </>
   );
 }

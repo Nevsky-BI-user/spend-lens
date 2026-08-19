@@ -249,23 +249,24 @@ function SessionCards({ rows, onSelect }) {
   );
 }
 
-export default function SessionsTab({ snapshot, anomalies = null }) {
+export default function SessionsTab({ snapshot, returns = null }) {
   const [selected, setSelected] = useState(null);
   const [sort, setSort] = useState({ key: 'cost', dir: 'desc' }); // типово $ ↓
   const isPhone = useMediaQuery(PHONE_MEDIA);
   const base = useMemo(() => analyzeSessions(snapshot).flagged, [snapshot]);
 
-  // Аномалія — це вже готовий прапорець ({type:'ANOMALY', wasteUsd:0, evidence}),
-  // рахований на повній історії проєкту; ставимо його першим, бо це сигнал
-  // «подивись сюди», а не оцінка втрат (wasteUsd:0 — навмисно).
-  const anomalyById = anomalies?.sessions?.byId || null;
+  // «Слабка віддача» — готовий прапорець ({type:'LOW_RETURN', wasteUsd:0,
+  // evidence}), рахований на повній історії проєкту (v1.8 замінив ним
+  // порівняння абсолютних сум); ставимо першим — це сигнал «подивись сюди»,
+  // а не оцінка втрат (wasteUsd:0 навмисно, інакше «Фактори» задвоїли б суми).
+  const returnById = returns?.byId || null;
   const flagged = useMemo(() => {
-    if (!anomalyById || anomalyById.size === 0) return base;
+    if (!returnById || returnById.size === 0) return base;
     return base.map((it) => {
-      const a = anomalyById.get(it.session.sessionId);
+      const a = returnById.get(it.session.sessionId);
       return a ? { ...it, flags: [a, ...it.flags] } : it;
     });
-  }, [base, anomalyById]);
+  }, [base, returnById]);
 
   const onSort = (key, alpha) => {
     setSort((s) => (s.key === key
@@ -353,8 +354,11 @@ export default function SessionsTab({ snapshot, anomalies = null }) {
                   <td className="cell-num">{fmtTokens(s.avgContext)}</td>
                   <td className="cell-num cell-cost">{fmtUsd(t.costUsd)}</td>
                   <td className="cell-flags">
+                    {/* v1.8: у таблиці — короткі назви (повні в title і в
+                        дровері), інакше чіпи стають у стовпчик і рядок
+                        виростає втричі. */}
                     <div className="chip-row">
-                      {item.flags.map((f) => <FlagChip key={f.type} type={f.type} />)}
+                      {item.flags.map((f) => <FlagChip key={f.type} type={f.type} short />)}
                     </div>
                   </td>
                 </tr>

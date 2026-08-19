@@ -1,4 +1,11 @@
-// Виявлення аномалій витрат (CONTRACT v1.6, пункт 3). Чисті функції.
+// Виявлення аномальних ДНІВ за витратами (CONTRACT v1.6 §3, звужено v1.8 §1).
+// Чисті функції.
+//
+// v1.8: детекція на рівні СЕСІЙ звідси прибрана. Порівнювати абсолютну
+// вартість сесії з медіанною вартістю сесії безглуздо (дешева сесія могла
+// нічого не зробити) — її замінила відносна віддача, web/src/lib/efficiency.js.
+// Денна детекція лишається заради контролю бюджету, але доказ до неї теж
+// відносний: ціна однієї правки того дня проти ціни правки у звичайний день.
 //
 // Робастна статистика: медіана + MAD, БЕЗ середнього та σ — один сплеск на
 // $300 зсуває середнє так, що «аномалією» перестає бути будь-що.
@@ -6,8 +13,9 @@
 // детекція не працює взагалі — краще нічого не показати, ніж позначити
 // аномалією другу сесію в проєкті.
 
-import { plural, dayToDate } from './analytics.js';
+import { dayToDate } from './analytics.js';
 import { fmtUsd } from './format.js';
+import { dayReturnEvidence } from './efficiency.js';
 
 // --------------------------------------------------------------- описувач ---
 
@@ -39,10 +47,6 @@ export function withAnomalyFlag(flagMeta = {}) {
 /** Пороги детекції (тюняться без перезбирання снапшота). */
 export const ANOMALY_RULES = {
   minPoints: 8,            // спільний захист: менше точок — детекції немає
-  session: {
-    multiplier: 3,         // costUsd > 3 × медіана сесій проєкту
-    minUsd: 5,             // …але не менше за $5 в абсолюті
-  },
   day: {
     trailing: 30,          // ковзне вікно, календарних днів
     k: 3,                  // cost > median + k × 1.4826 × MAD
@@ -74,16 +78,6 @@ export function scaledMad(values, med = null) {
   return ANOMALY_RULES.MAD_SCALE * mad(values, med);
 }
 
-// ---------------------------------------------------------------- копірайт --
-
-/** «3 рази» / «3,4 раза» / «12 разів» — коректна українська після числа. */
-function timesText(x) {
-  if (!Number.isFinite(x)) return 'багато разів';
-  const r = x >= 10 ? Math.round(x) : Math.round(x * 10) / 10;
-  if (Number.isInteger(r)) return `${r} ${plural(r, 'раз', 'рази', 'разів')}`;
-  return `${String(r).replace('.', ',')} раза`;
-}
-
 // ------------------------------------------------------------- дні: утиліти --
 
 function shiftDay(day, delta) {
@@ -91,87 +85,6 @@ function shiftDay(day, delta) {
   d.setDate(d.getDate() + delta);
   const p = (n) => String(n).padStart(2, '0');
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
-}
-
-function sessionCost(s) {
-  return (s && s.totals && s.totals.costUsd) || 0;
-}
-
-// ------------------------------------------------------- аномальні сесії ----
-
-/**
- * Аномально дорогі сесії В МЕЖАХ ПРОЄКТУ (порівнювати сесію в pdp-docs із
- * сесією в іншому проєкті безглуздо — там інша природа роботи).
- *
- * Поріг: costUsd > max(multiplier × медіана сесій проєкту, minUsd).
- * Захист: у проєкті має бути ≥ minPoints сесій, інакше проєкт пропускається.
- *
- * @param {Array} sessions снапшот `sessions` (уже відфільтрований, якщо треба)
- * @param {{multiplier?:number,minUsd?:number,minPoints?:number}} [opts]
- * @returns {{
- *   list: Array,                 // аномалії, вартість ↓
- *   byId: Map<string, object>,   // sessionId → елемент (O(1) для таблиці/дровера)
- *   projects: Map<string, {project:string,sessions:number,medianUsd:number,thresholdUsd:number,enough:boolean}>
- * }}
- * Кожен елемент list/byId уже є ПРАПОРЦЕМ у форматі sessionFlags():
- * `{ type:'ANOMALY', wasteUsd:0, evidence:'…' }` + додаткові поля
- * (sessionId, project, title, costUsd, medianUsd, thresholdUsd, ratio, startedAt).
- * wasteUsd = 0 навмисно: аномалія — це сигнал «подивись сюди», а не оцінка
- * втрат; інакше вона задвоїла б суми у вкладці «Фактори».
- */
-export function detectSessionAnomalies(sessions, {
-  multiplier = ANOMALY_RULES.session.multiplier,
-  minUsd = ANOMALY_RULES.session.minUsd,
-  minPoints = ANOMALY_RULES.minPoints,
-} = {}) {
-  const byProject = new Map();
-  for (const s of sessions || []) {
-    const key = s.project || '—';
-    const arr = byProject.get(key);
-    if (arr) arr.push(s); else byProject.set(key, [s]);
-  }
-
-  const projects = new Map();
-  const list = [];
-  const byId = new Map();
-
-  for (const [project, arr] of byProject) {
-    const costs = arr.map(sessionCost);
-    const medianUsd = median(costs);
-    const thresholdUsd = Math.max(multiplier * medianUsd, minUsd);
-    const enough = arr.length >= minPoints;
-    projects.set(project, {
-      project, sessions: arr.length, medianUsd, thresholdUsd, enough,
-    });
-    if (!enough) continue;
-
-    for (const s of arr) {
-      const costUsd = sessionCost(s);
-      if (!(costUsd > thresholdUsd)) continue;
-      const ratio = medianUsd > 0 ? costUsd / medianUsd : Infinity;
-      const evidence = medianUsd >= 0.005
-        ? `у ${timesText(ratio)} дорожча за типову сесію в проєкті (${fmtUsd(medianUsd)})`
-        : `коштує ${fmtUsd(costUsd)}, тоді як типова сесія в проєкті майже безкоштовна`;
-      const item = {
-        type: ANOMALY_FLAG,
-        wasteUsd: 0,
-        evidence,
-        sessionId: s.sessionId,
-        project,
-        title: s.title || s.sessionId,
-        startedAt: s.startedAt || null,
-        costUsd,
-        medianUsd,
-        thresholdUsd,
-        ratio,
-      };
-      list.push(item);
-      if (s.sessionId) byId.set(s.sessionId, item);
-    }
-  }
-
-  list.sort((a, b) => b.costUsd - a.costUsd);
-  return { list, byId, projects };
 }
 
 // --------------------------------------------------------- аномальні дні ----
@@ -206,6 +119,7 @@ export function detectDayAnomalies(days, {
   k = ANOMALY_RULES.day.k,
   minPoints = ANOMALY_RULES.minPoints,
   minUsd = ANOMALY_RULES.day.minUsd,
+  dayRates = null,
 } = {}) {
   const totals = new Map();
   for (const d of days || []) {
@@ -240,9 +154,13 @@ export function detectDayAnomalies(days, {
 
     const ratio = medianUsd > 0 ? costUsd / medianUsd : Infinity;
     if (isAnomaly) {
-      evidence = medianUsd >= 0.005
-        ? `у ${timesText(ratio)} більше за типовий день (${fmtUsd(medianUsd)})`
-        : `${fmtUsd(costUsd)} за добу, тоді як типовий день у вікні — майже без витрат`;
+      // Доказ — ВІДНОСНИЙ (v1.8): ціна однієї правки того дня проти ціни
+      // правки у звичайний день. Без ставок (снапшот v1 без дайджестів) —
+      // чесно кажемо, що день дорогий, БЕЗ порівняння суми з сумою.
+      const rate = dayRates ? dayRates.get(day) : null;
+      evidence = rate
+        ? dayReturnEvidence(rate)
+        : `${fmtUsd(costUsd)} за добу — різкий сплеск витрат`;
     }
 
     const row = {
@@ -268,12 +186,12 @@ export function detectDayAnomalies(days, {
 }
 
 /**
- * Обидві детекції за один виклик — зручно для App/мемоїзації.
- * @returns {{ sessions: ReturnType<detectSessionAnomalies>, days: ReturnType<detectDayAnomalies> }}
+ * Обгортка для мемоїзації в App: денні аномалії на переданому зрізі.
+ * `dayRates` — результат dayReturn() з efficiency.js (Map day → ставка).
+ * @returns {{ days: ReturnType<detectDayAnomalies> }}
  */
-export function detectAnomalies(snapshot, { session = {}, day = {} } = {}) {
+export function detectAnomalies(snapshot, { day = {} } = {}) {
   return {
-    sessions: detectSessionAnomalies((snapshot && snapshot.sessions) || [], session),
     days: detectDayAnomalies((snapshot && snapshot.days) || [], day),
   };
 }

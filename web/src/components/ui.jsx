@@ -4,10 +4,12 @@
 import React, { useState } from 'react';
 import { FLAG_META } from '../lib/rules.js';
 import { withAnomalyFlag } from '../lib/anomalies.js';
+import { withLowReturnFlag } from '../lib/efficiency.js';
 import { fmtUsd } from '../lib/format.js';
 
-/** FLAG_META + ANOMALY (v1.6): rules.js лишається недоторканим. */
-export const FLAG_META_ALL = withAnomalyFlag(FLAG_META);
+/** FLAG_META + ANOMALY (v1.6, дні) + LOW_RETURN (v1.8, сесії):
+ *  rules.js лишається недоторканим. */
+export const FLAG_META_ALL = withLowReturnFlag(withAnomalyFlag(FLAG_META));
 
 /**
  * Картка. `actions` (v1.5, необов’язковий) — керування праворуч від заголовка
@@ -34,12 +36,30 @@ export function Card({ title, subtitle, children, className = '', actions = null
   );
 }
 
-/** Пастельний чіп прапорця (iOS-бейдж). */
-export function FlagChip({ type, wasteUsd = null }) {
+/**
+ * Короткі назви прапорців — ЛИШЕ для колонки «Прапорці» в таблиці «Сесій»
+ * (v1.8). Повні назви ширші за колонку 16 %, тож чіпи ставали в стовпчик і
+ * рядок виростав до ~162px. Коротка назва вміщує два чіпи в ряд; повна
+ * лишається в `title`, у дровері й у картках на телефоні — нічого не зникає.
+ */
+export const FLAG_SHORT = {
+  CACHE_MISS: 'Кеш-промах',
+  FAT_CONTEXT: 'Контекст',
+  PREMIUM_MODEL: 'Модель',
+  LONG_SESSION: 'Довга сесія',
+  SUBAGENT_HEAVY: 'Субагент',
+  TOP_BURNER: 'Топ витрат',
+  ANOMALY: 'Аномалія',
+  LOW_RETURN: 'Віддача',
+};
+
+/** Пастельний чіп прапорця (iOS-бейдж). `short` — компактний варіант. */
+export function FlagChip({ type, wasteUsd = null, short = false }) {
   const meta = FLAG_META_ALL[type] || { label: type };
+  const label = short ? (FLAG_SHORT[type] || meta.label) : meta.label;
   return (
-    <span className={`chip chip-${type}`}>
-      {meta.label}
+    <span className={`chip chip-${type}`} title={short ? meta.label : undefined}>
+      {label}
       {wasteUsd != null && wasteUsd > 0 && <em>{fmtUsd(wasteUsd)}</em>}
     </span>
   );

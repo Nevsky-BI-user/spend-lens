@@ -3,13 +3,15 @@
 // Три погляди на те, скільки коштує одиниця роботи:
 //  (a) вартість одного ходу асистента за днями + ковзне середнє 7 днів;
 //  (b) фактична ціна $ за 1M вихідних токенів у розрізі моделей;
-//  (c) KPI-трійця: середня сесія, середній хід, частка кешу в контексті.
+//  (c) KPI-трійця: середня сесія, середній хід, частка кешу в контексті;
+//  (d) v1.8 §1 — «Віддача на витрачене»: ціна ОДИНИЦІ роботи (правки),
+//      проєкти за $ за правку з лінією медіани й найгірші сесії за індексом.
 //
 // Дані — з відфільтрованого зрізу (період + проєкт + день), як і решта вкладки.
 
 import React, { useMemo } from 'react';
 import {
-  ResponsiveContainer, LineChart, Line, BarChart, Bar,
+  ResponsiveContainer, LineChart, Line, BarChart, Bar, ReferenceLine,
   XAxis, YAxis, CartesianGrid, Tooltip, LabelList,
 } from 'recharts';
 import {
@@ -18,6 +20,10 @@ import {
 import {
   fmtUsd, fmtUsdFine, fmtUsdCompact, fmtDayShort, fmtInt, fmtPct, fmtTokens, shortModel,
 } from '../lib/format.js';
+import {
+  baselines as computeBaselines, projectReturn, projectReturnMedian, lowReturnSessions,
+  basePoints, baseMinPoints, hasNorm, fmtRateUsd, CLASS_EDITS, RETURN_RULES,
+} from '../lib/efficiency.js';
 import { Card, EmptyState } from './ui.jsx';
 import {
   GRID, X_PROPS, Y_PROPS, ChartTooltip, LegendRow, useHBarAxis,
@@ -25,6 +31,8 @@ import {
 
 const BLUE = '#007AFF';
 const TEAL = '#32ADE6';
+const ORANGE = '#FF9500';
+const GRAY = '#8E8E93';
 
 const TURN_NAMES = { costPerTurn: 'вартість ходу', ma: 'середнє за 7 днів' };
 
@@ -167,11 +175,187 @@ function EfficiencyKpis({ days, sessions }) {
   );
 }
 
-export default function EfficiencyGroup({ days, sessions, height, isPhone }) {
+/**
+ * (d) «Віддача на витрачене» (CONTRACT v1.8 §1): KPI-трійця ставок, проєкти
+ * за $ за правку з лінією медіани і 5 найгірших сесій за індексом віддачі.
+ *
+ * `baselines` приходить з App — там медіани рахуються на ПОВНІЙ історії
+ * проєкту, тож норма не стрибає від зміни періоду. Немає (виклик поза App) —
+ * рахуємо на видимому зрізі.
+ */
+function ReturnCard({ sessions, baselines: baseProp, isPhone }) {
+  const base = useMemo(
+    () => baseProp || computeBaselines(sessions),
+    [baseProp, sessions]
+  );
+  const edits = base[CLASS_EDITS] || {};
+  const medianEdit = edits.usdPerEdit != null ? edits.usdPerEdit : null;
+  // Точки норми — це сесії, що дали САМЕ ставку $ за правку (не всі сесії
+  // класу), і поки їх менше за 8, норма не сформована (CONTRACT v1.6 §3).
+  const need = baseMinPoints(base);
+  const editPoints = basePoints(base, CLASS_EDITS);
+  const normReady = editPoints >= need;
+  const normAny = hasNorm(base);
+  const rows = useMemo(() => projectReturn(sessions, { topN: 8 }), [sessions]);
+  // Лінія рахується по ТІЙ САМІЙ популяції, що й стовпчики (ставка проєкту),
+  // інакше вона систематично лежала б нижче за них.
+  const medianRef = useMemo(() => projectReturnMedian(sessions), [sessions]);
+  const worst = useMemo(
+    // minCostUsd той самий, що й у прапорця: сесія на $0,70 з індексом 95
+    // формально «найгірша», але на дашборді про гроші вона нічого не значить.
+    // minIndex > 1: сесія РІВНО на медіані не «дорожча за медіану».
+    () => lowReturnSessions(sessions, {
+      base,
+      minIndex: RETURN_RULES.worstMinIndex,
+      minCostUsd: RETURN_RULES.minCostUsd,
+      sortBy: 'index',
+      limit: 5,
+    }),
+    [sessions, base]
+  );
+  const axis = useHBarAxis(rows.map((r) => r.project), isPhone, 38);
+  const hasData = rows.length > 0 || worst.length > 0 || medianEdit != null;
+
+  return (
+    <Card
+      title="Віддача на витрачене"
+      subtitle="Менше — краще: скільки коштувала одиниця роботи. Порівнюємо ставки, а не суми — дешева сесія могла не зробити нічого"
+      className="return-card"
+    >
+      {!hasData ? (
+        <EmptyState text="У цьому зрізі немає правок у файлах — ціну одиниці роботи рахувати нема з чого." />
+      ) : (
+        <>
+          <div className="return-kpis">
+            <div>
+              <span>Медіана $ за правку</span>
+              <strong>{medianEdit != null ? fmtRateUsd(medianEdit) : '—'}</strong>
+              <em>
+                {normReady ? (
+                  <>
+                    {fmtInt(editPoints)}{' '}
+                    {plural(editPoints, 'сесія', 'сесії', 'сесій')} класу «правки»
+                  </>
+                ) : (
+                  <>
+                    замало для норми: {fmtInt(editPoints)} з {fmtInt(need)} сесій
+                    {' '}класу «правки»
+                  </>
+                )}
+              </em>
+            </div>
+            <div>
+              <span>Медіана контексту на правку</span>
+              <strong>{edits.contextPerEdit != null ? fmtTokens(edits.contextPerEdit) : '—'}</strong>
+              <em>токенів контексту на одну правку</em>
+            </div>
+            <div>
+              <span>Частка виходу</span>
+              <strong>
+                {base.all && base.all.outputShare != null
+                  ? fmtPct(base.all.outputShare * 100, 1)
+                  : '—'}
+              </strong>
+              <em>вихідних токенів серед усіх оплачених</em>
+            </div>
+          </div>
+
+          {rows.length > 0 && (
+            <>
+              <h4 className="card-section">Проєкти за ціною однієї правки: менше — краще</h4>
+              <div ref={axis.ref}>
+                <ResponsiveContainer width="100%" height={Math.max(160, rows.length * axis.rowHeight + 30)}>
+                  <BarChart
+                    data={rows}
+                    layout="vertical"
+                    margin={{ top: 18, right: isPhone ? 52 : 64, left: isPhone ? 0 : 8, bottom: 4 }}
+                  >
+                    <XAxis type="number" hide />
+                    <YAxis
+                      type="category"
+                      dataKey="project"
+                      tickLine={false}
+                      axisLine={false}
+                      width={axis.yWidth}
+                      tick={axis.tick}
+                    />
+                    <Tooltip
+                      cursor={{ fill: 'rgba(0,0,0,0.04)' }}
+                      content={<ChartTooltip nameFormatter={() => '$ за правку'} valueFormatter={fmtRateUsd} />}
+                    />
+                    {medianRef != null && (
+                      <ReferenceLine
+                        x={medianRef}
+                        stroke={GRAY}
+                        strokeDasharray="4 4"
+                        ifOverflow="extendDomain"
+                        label={{
+                          value: `медіана проєктів ${fmtRateUsd(medianRef)}`,
+                          position: 'top',
+                          fill: GRAY,
+                          fontSize: 11,
+                        }}
+                      />
+                    )}
+                    <Bar dataKey="usdPerEdit" fill={ORANGE} barSize={18} radius={[0, 6, 6, 0]}>
+                      <LabelList
+                        dataKey="usdPerEdit"
+                        position="right"
+                        formatter={fmtRateUsd}
+                        style={{ fontSize: isPhone ? 11 : 12, fill: '#1C1C1E' }}
+                      />
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+              <p className="muted-text">
+                Стовпчик — витрати проєкту, поділені на його правки
+                {medianRef != null
+                  ? '; лінія — медіана цієї ж ставки по всіх проєктах зрізу.'
+                  : '.'}
+              </p>
+            </>
+          )}
+
+          {!normAny && (
+            <p className="muted-text">
+              Порівняння сесій із нормою вимкнено: у жодному класі ще немає{' '}
+              {fmtInt(need)} порівнянних сесій.
+            </p>
+          )}
+
+          {worst.length > 0 && (
+            <>
+              <h4 className="card-section">
+                Найгірша віддача — {worst.length}{' '}
+                {plural(worst.length, 'сесія', 'сесії', 'сесій')}
+              </h4>
+              <ul className="return-sessions">
+                {worst.map((w) => (
+                  <li key={w.sessionId}>
+                    <span className="return-session-head">
+                      <span className="return-session-title">{w.title}</span>
+                      <span className="return-session-cost">{fmtUsd(w.costUsd)}</span>
+                    </span>
+                    <span className="return-session-sub">{w.project} · {w.class}</span>
+                    <span className="return-session-why">{w.evidence}</span>
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
+        </>
+      )}
+    </Card>
+  );
+}
+
+export default function EfficiencyGroup({ days, sessions, baselines = null, height, isPhone }) {
   return (
     <>
       <h2 className="group-title">Ефективність</h2>
       <EfficiencyKpis days={days} sessions={sessions} />
+      <ReturnCard sessions={sessions} baselines={baselines} isPhone={isPhone} />
       <div className="grid-2">
         <CostPerTurnCard days={days} height={height} />
         <OutputPriceCard days={days} isPhone={isPhone} />

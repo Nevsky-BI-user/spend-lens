@@ -13,7 +13,8 @@ import {
   efficiencyKpis, lastDay, plural,
 } from './analytics.js';
 import { FLAG_META } from './rules.js';
-import { detectSessionAnomalies, withAnomalyFlag } from './anomalies.js';
+import { withAnomalyFlag } from './anomalies.js';
+import { lowReturnSessions, indexBySession, withLowReturnFlag } from './efficiency.js';
 import { buildProjectCards, capitalizeFirst, projectSummary } from './digest.js';
 import { fmtDomMonth, shortModel } from './format.js';
 
@@ -30,7 +31,7 @@ const HEADER_BORDER = { bottom: { style: 'thin', color: { argb: 'FFD1D1D6' } } }
 
 const SEVERITY_LABEL = { high: 'критично', medium: 'помітно', low: 'дрібниця' };
 
-const META_ALL = withAnomalyFlag(FLAG_META);
+const META_ALL = withLowReturnFlag(withAnomalyFlag(FLAG_META));
 
 // ------------------------------------------------------------ дати --------
 
@@ -66,16 +67,15 @@ function partsInTz(iso, timeZone) {
 }
 
 /**
- * Аномалії сесій ззовні: приймаємо і сирий Map, і результат
- * detectSessionAnomalies()/detectAnomalies().sessions. null → рахуємо самі.
+ * Прапорці «Слабка віддача» ззовні: приймаємо і сирий Map, і результат
+ * analyzeReturn(). null → рахуємо самі на зрізі.
  */
-function normalizeAnomalyMap(src) {
+function normalizeReturnMap(src) {
   if (!src) return null;
-  // Порожню мапу повертаємо як є: «App порахував і не знайшов аномалій» —
+  // Порожню мапу повертаємо як є: «App порахував і слабкої віддачі не знайшов» —
   // це не привід перерахувати на зрізі й дописати в аркуш зайві чіпи.
   if (src instanceof Map) return src;
   if (src.byId instanceof Map) return src.byId;
-  if (src.sessions && src.sessions.byId instanceof Map) return src.sessions.byId;
   return null;
 }
 
@@ -123,7 +123,7 @@ function flagLabel(type) {
  * @param {object} snapshot ВІДФІЛЬТРОВАНИЙ зріз (period/project/day уже застосовані)
  * @param {{project?:string|null, period?:number, day?:string|null,
  *          budgetUsd?:number|null, forecastTotal?:number|null,
- *          sessionAnomalies?:Map|{byId:Map}|null}} [meta]
+ *          sessionReturns?:Map|{byId:Map}|null}} [meta]
  * @returns {{kpi:Array, daily:Array, projects:Array, models:Array,
  *            sessions:Array, recommendations:Array, meta:object}}
  */
@@ -233,21 +233,20 @@ export function buildSheetData(snapshot, meta = {}) {
     }))
     .sort((a, b) => b.costUsd - a.costUsd);
 
-  // --- сесії з прапорцями (включно з аномаліями) ---
+  // --- сесії з прапорцями (включно зі «Слабкою віддачею») ---
   //
-  // Аномалії БЕРЕМО ГОТОВІ з meta.sessionAnomalies (App рахує їх на повній
-  // історії проєкту). Перерахунок на самому зрізі давав інший набір: медіана
-  // проєкту у вікні «7 днів» рахується по кількох сесіях, а на тонких даних
-  // спрацьовує ще й guard ≥8 точок — і чіп «Аномалія», який видно в таблиці,
-  // тихо зникав з аркуша. Фолбек на зріз лишаємо для викликів поза App
-  // (юніт-тести, Node) — там повна історія і є цим зрізом.
+  // Прапорці БЕРЕМО ГОТОВІ з meta.sessionReturns (App рахує їх на повній
+  // історії проєкту). Перерахунок на самому зрізі давав інший набір: медіани
+  // ставок у вікні «7 днів» стоять на кількох сесіях — і чіп, який видно в
+  // таблиці, тихо зникав з аркуша. Фолбек на зріз лишаємо для викликів поза
+  // App (юніт-тести, Node) — там повна історія і є цим зрізом.
   const { flagged } = analyzeSessions(snap);
-  const anomalyById = normalizeAnomalyMap(meta.sessionAnomalies)
-    || detectSessionAnomalies(sessions).byId;
+  const returnById = normalizeReturnMap(meta.sessionReturns)
+    || indexBySession(lowReturnSessions(sessions));
   const sessionRows = flagged
     .map(({ session: s, flags }) => {
-      const anomaly = anomalyById.get(s.sessionId);
-      const all = anomaly ? [...flags, anomaly] : flags;
+      const lowReturn = returnById.get(s.sessionId);
+      const all = lowReturn ? [...flags, lowReturn] : flags;
       const t = s.totals || {};
       const d = s.digest || null;
       return {
@@ -392,7 +391,7 @@ function addTableSheet(wb, name, columns, rows) {
  * @param {object} snapshotSlice відфільтрований зріз (period/project/day)
  * @param {{project?:string|null, period?:number, day?:string|null,
  *          budgetUsd?:number|null, forecastTotal?:number|null,
- *          sessionAnomalies?:Map|{byId:Map}|null}} [meta]
+ *          sessionReturns?:Map|{byId:Map}|null}} [meta]
  * @returns {Promise<object>} exceljs Workbook
  */
 export async function buildWorkbook(snapshotSlice, meta = {}) {

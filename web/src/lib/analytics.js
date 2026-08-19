@@ -2,7 +2,7 @@
 // Вхід: снапшот (schemaVersion 1) — { days, sessions, pricingUsed, ... }.
 // Гроші — USD. Ціни — USD за MTok (див. CONTRACT.md).
 
-import { RULES, SEVERITY } from './rules.js';
+import { RULES, SEVERITY, SMALL_PROJECT_USD } from './rules.js';
 import { fmtUsd, plural } from './format.js';
 
 // ---------------------------------------------------------------- pricing ---
@@ -561,7 +561,9 @@ export function sessionFlags(session, pricingUsed, { p90CostUsd = Infinity, suba
     flags.push({
       type: 'TOP_BURNER',
       wasteUsd: 0,
-      evidence: `вартість $${usd(cost)} — вище p90 усіх сесій`,
+      // v1.8: без порівняння «дорожча за типову сесію» — лише позиція
+      // в розподілі власних витрат, без множників проти чужої суми.
+      evidence: `$${usd(cost)} за сесію — верхні 10 % за витратами`,
     });
   }
 
@@ -1066,6 +1068,68 @@ export function budgetStatus({ monthCost = 0, forecastTotal = null, budgetUsd = 
     forecastPct: forecast == null ? null : (forecast / budget) * 100,
     remainingUsd: Math.max(0, budget - spent),
     basisUsd: basis,
+  };
+}
+
+// ============================================ v1.8 §3: дрібні проєкти ========
+
+/** Підпис зведеного рядка: «Інші — 12 проєктів». */
+export function otherProjectsLabel(n) {
+  return `${OTHER_PROJECT} — ${n} ${plural(n, 'проєкт', 'проєкти', 'проєктів')}`;
+}
+
+/**
+ * Згортання дрібних проєктів в один рядок (CONTRACT v1.8 §3).
+ *
+ * Вхід — уже відсортований за вартістю ↓ масив рядків із полями
+ * `project` і `costUsd` (costByProject, картки вкладки «Проєкти»).
+ *
+ * Захист від виродженого випадку: якщо після згортання окремих рядків
+ * лишається менше `minRows`, згортання не має сенсу (на короткому періоді
+ * дрібне все) — тоді показуємо `fallbackTopN` найбільших поіменно, а решту
+ * зводимо. Якщо і зводити нема чого, повертаємо вхід як є.
+ *
+ * @param {Array<{project:string,costUsd:number}>} rows
+ * @param {{threshold?:number, minRows?:number, fallbackTopN?:number}} [opts]
+ * @returns {{rows:Array, small:Array, grouped:boolean, otherUsd:number,
+ *            otherCount:number, otherLabel:string|null}}
+ *   `rows` — видимий згорнутий список (зведений рядок останній, із
+ *   `isOther:true` і `project` = otherProjectsLabel(n)).
+ */
+export function groupSmallProjects(rows, {
+  threshold = SMALL_PROJECT_USD, minRows = 3, fallbackTopN = 5,
+} = {}) {
+  const src = (rows || []).filter(Boolean);
+  const empty = {
+    rows: src, small: [], grouped: false, otherUsd: 0, otherCount: 0, otherLabel: null,
+  };
+  if (src.length <= minRows) return empty;
+
+  let big = src.filter((r) => (r.costUsd || 0) >= threshold);
+  let small = src.filter((r) => (r.costUsd || 0) < threshold);
+
+  // Вироджений випадок: майже все дрібне — тоді ділимо за рангом, а не сумою.
+  if (big.length < minRows) {
+    big = src.slice(0, fallbackTopN);
+    small = src.slice(fallbackTopN);
+  }
+  if (!small.length) return empty;
+
+  const otherUsd = small.reduce((a, r) => a + (r.costUsd || 0), 0);
+  const otherLabel = otherProjectsLabel(small.length);
+  return {
+    rows: [...big, {
+      project: otherLabel,
+      costUsd: otherUsd,
+      isOther: true,
+      count: small.length,
+      items: small,
+    }],
+    small,
+    grouped: true,
+    otherUsd,
+    otherCount: small.length,
+    otherLabel,
   };
 }
 
