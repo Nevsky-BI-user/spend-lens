@@ -277,6 +277,9 @@ function Dashboard() {
         project,
         period,
         day,
+        // v1.10: аркуш «Вивід інструментів» ріже toolOutput тим самим вікном,
+        // що й картка на «Категоріях» — для цього потрібен якір періоду.
+        anchorDay,
         budgetUsd: budget,
         forecastTotal: monthCmp ? monthCmp.forecastTotal : null,
         // Ті самі прапорці «Слабка віддача», що й у таблиці «Сесій»: рахувати
@@ -289,7 +292,7 @@ function Dashboard() {
     } finally {
       setExportBusy(false);
     }
-  }, [filtered, project, period, day, budget, monthCmp, returns]);
+  }, [filtered, project, period, day, anchorDay, budget, monthCmp, returns]);
 
   // --- стани без даних ---
   if (state.status === 'loading') {

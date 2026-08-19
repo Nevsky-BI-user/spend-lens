@@ -17,6 +17,8 @@ import { withAnomalyFlag } from './anomalies.js';
 import { lowReturnSessions, indexBySession, withLowReturnFlag } from './efficiency.js';
 import { buildProjectCards, capitalizeFirst, projectSummary } from './digest.js';
 import { fmtDomMonth, shortModel } from './format.js';
+import { rtkWindow } from './rtkValue.js';
+import { charsToTokens } from './toolFlow.js';
 
 // ------------------------------------------------------------ формати ------
 
@@ -329,6 +331,28 @@ export function buildSheetData(snapshot, meta = {}) {
     { label: 'Прогноз на кінець місяця', value: forecastTotal ?? '—', fmt: forecastTotal ? MONEY : null },
   ];
 
+  // --- вивід інструментів (v1.10) ---
+  // Вікно рахуємо тим самим rtkWindow, що й картка: колектор не ділить вивід
+  // за проєктами, тож фільтр проєкту сюди не застосовується (інакше межі from/to
+  // з `daily` звузили б період до днів, активних лише в одному проєкті).
+  const toolWin = rtkWindow({ period, day, anchorDay: meta.anchorDay || '' });
+  const toolOutput = (Array.isArray(snap.toolOutput) ? snap.toolOutput : [])
+    .filter(
+      (r) =>
+        r && r.day && r.tool
+        && (!toolWin.from || r.day >= toolWin.from)
+        && (!toolWin.to || r.day <= toolWin.to)
+    )
+    .map((r) => ({
+      day: r.day,
+      dayText: fmtDayUa(r.day),
+      tool: r.tool,
+      calls: Number(r.calls) || 0,
+      chars: Number(r.chars) || 0,
+      tokens: Math.round(charsToTokens(r.chars)),
+    }))
+    .sort((a, b) => (a.day < b.day ? -1 : a.day > b.day ? 1 : b.chars - a.chars));
+
   return {
     kpi,
     daily,
@@ -336,6 +360,7 @@ export function buildSheetData(snapshot, meta = {}) {
     models,
     sessions: sessionRows,
     recommendations,
+    toolOutput,
     meta: { project, period, day, timeZone, totalUsd, from, to, budgetUsd, forecastTotal },
   };
 }
@@ -520,6 +545,19 @@ export async function buildWorkbook(snapshotSlice, meta = {}) {
     { header: 'Запит', key: 'intent', width: 70, wrap: true },
     { header: 'ID сесії', key: 'sessionId', width: 38 },
   ], data.sessions);
+
+  // ---------------- Вивід інструментів (v1.10) -----------------------------
+  // Символи → токени за наближенням 4:1; для скриншотів у base64 воно завищує,
+  // тому колонка називається «Токени, приблизно», а не «Токени».
+  if (data.toolOutput.length) {
+    addTableSheet(wb, 'Вивід інструментів', [
+      { header: 'День', key: 'dayText', width: 18 },
+      { header: 'Інструмент', key: 'tool', width: 24 },
+      { header: 'Результатів', key: 'calls', width: 14, numFmt: INT },
+      { header: 'Символів', key: 'chars', width: 16, numFmt: INT },
+      { header: 'Токени, приблизно', key: 'tokens', width: 20, numFmt: INT },
+    ], data.toolOutput);
+  }
 
   // ---------------- Рекомендації -------------------------------------------
   addTableSheet(wb, 'Рекомендації', [

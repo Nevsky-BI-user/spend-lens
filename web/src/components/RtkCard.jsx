@@ -61,8 +61,19 @@ function RtkTooltip({ active, payload, label }) {
   );
 }
 
+// v1.10: перехресне посилання на картку потоку виводу — вона стоїть просто над
+// цією і показує, ЧОМУ економія RTK не може бути великою. Прапорець crossRef
+// вмикає його лише тоді, коли та картка справді має що показати ЗА ЦЕЙ ЖЕ
+// період: указувати «дивіться вище» на порожній стан — гірше, ніж мовчати.
+// Конкретних інструментів тут не називаємо — їхній склад міняється з періодом,
+// а перелічує їх сама картка потоку, з даних вікна.
+const CROSS_REF =
+  ' Стелю цієї економії видно в картці вище: RTK підрізає лише вивід команд, '
+  + 'а решта потоку інструментів проходить повз нього.';
+
 export default function RtkCard({
   rtk, allDays = [], pricingUsed = {}, period = 0, day = null, anchorDay = '', height,
+  crossRef = false,
 }) {
   const h = height || ((base) => base);
 
@@ -88,10 +99,11 @@ export default function RtkCard({
   // Запит ширший за наявну статистику: «30 днів» і «увесь час» дають однакові
   // числа, і мовчати про це не можна — інакше фільтр виглядає зламаним.
   const truncated = nDays > 0 && !!cover.from && (win.from == null || win.from < cover.from);
-  const subtitle = truncated
+  const subtitleBase = truncated
     ? `${SUBTITLE_BASE}. Денні лічильники RTK починаються з ${dayInWords(cover.from)} — `
       + 'за раніші дні їх немає, тож ширші періоди нічого не додають.'
     : `${SUBTITLE_BASE}, період — впливає.`;
+  const subtitle = crossRef ? subtitleBase + CROSS_REF : subtitleBase;
 
   // Порожньо може бути з двох різних причин; стверджувати «не обробив жодної
   // команди» можна лише там, де RTK справді вів облік.

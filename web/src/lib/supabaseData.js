@@ -201,5 +201,8 @@ export async function fetchSnapshot() {
     // (rtk не встановлено, стара міграція, старий колектор) — тоді null, і вся
     // картка «Скільки економить RTK» просто не рендериться.
     rtk: meta.rtk || null,
+    // v1.10: вивід інструментів по днях. Немає рядка (стара БД / старий колектор)
+    // → null, і картка «Звідки течуть токени інструментів» не рендериться.
+    toolOutput: Array.isArray(meta.toolOutput) ? meta.toolOutput : null,
   };
 }

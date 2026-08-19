@@ -21,6 +21,11 @@
  *   dedup would drop every tool call except the last of a parallel batch.
  * - v1.9: блок `rtk` (статистика Rust Token Killer) — best-effort, див. rtk.mjs.
  *   Немає rtk / він упав → snapshot.rtk = null і жодного попередження.
+ * - v1.10: `toolOutput[]` — скільки символів кожен інструмент ПОВЕРНУВ за день.
+ *   `tool_result` блоки лежать у записах `type:"user"` і дублюються так само, як
+ *   `tool_use`: 61,5 тис. сирих блоків → 59,2 тис. після дедупу (915 повторів
+ *   усередині файлу + 1407 між файлами). Ключ дедупу — власний `tool_use_id`
+ *   блока, глобально, як і для digest-фактів; за message.id дедупити НЕ можна.
  * - After writing the snapshot: push aggregates to Supabase (skipped silently when
  *   collector/.env is absent, or when --no-push).
  */
@@ -42,10 +47,13 @@ const PRICING_FALLBACK = path.join(__dirname, 'pricing.json');
 const PROJECT_NOTES = path.join(__dirname, 'projects.json'); // optional, gitignored
 const LITELLM_URL =
   'https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json';
-const CACHE_VERSION = 8; // v1.7a: області без службових тек харнесу
+const CACHE_VERSION = 9; // v1.10: у кеші зʼявились розміри tool_result
 const SCHEMA_VERSION = 2;
 const TZ = 'Europe/Kyiv';
 const PARSE_CONCURRENCY = 8;
+// v1.10: скільки інструментів лишати в денному зрізі виводу; решта — у хвіст
+const TOOLS_PER_DAY = 12;
+const OTHER_TOOLS = 'інші';
 
 // ---------------------------------------------------------------- CLI args
 
@@ -340,6 +348,29 @@ function toolBlockKey(block, msgKey, idx) {
   return 'x' + hashKey(`${msgKey}|${idx}|${block.name}`);
 }
 
+/**
+ * v1.10. Ключ одного `tool_result` — той самий `toolu_*`, що й у його `tool_use`
+ * (префікс зрізаний, щоб кеш був меншим). Пара «результат ↔ виклик» дає і назву
+ * інструмента, і глобальний дедуп: один і той самий результат трапляється двічі
+ * і в межах файлу, і між файлами (переписані/відновлені транскрипти).
+ */
+function stripToolId(id) {
+  if (typeof id !== 'string' || !id) return null;
+  return id.startsWith('toolu_') ? id.slice(6) : id;
+}
+
+/** Кількість символів, які інструмент реально повернув у блоці `tool_result`. */
+function toolResultChars(block) {
+  const c = block.content;
+  if (typeof c === 'string') return c.length;
+  if (c == null) return 0;
+  try {
+    return JSON.stringify(c).length;
+  } catch {
+    return 0;
+  }
+}
+
 /** Pack one tool call into a compact cache string: `name`, `name|area`, `name|area|fileKey`. */
 function packToolFact(name, area, fileKey) {
   if (fileKey) return `${name}|${area || ''}|${fileKey}`;
@@ -470,7 +501,8 @@ function deriveProject(cwd, dirName) {
 
 /**
  * FileAgg = {
- *   malformed, rawMsgs,
+ *   malformed, rawMsgs, rawResults, rawResultChars,
+ *   results: { [toolResultKey]: "day|chars|tool" },   // v1.10, tool може бути ''
  *   units: {
  *     [key]: { id, sidechain, cwds:{}, dirName, customTitle, lastSummary,
  *              firstUserText, firstIntent, userTurns, firstTs, lastTs,
@@ -486,7 +518,10 @@ function deriveProject(cwd, dirName) {
  */
 function parseFile(file, dirName) {
   return new Promise((resolve) => {
-    const agg = { malformed: 0, rawMsgs: 0, units: {} };
+    const agg = { malformed: 0, rawMsgs: 0, rawResults: 0, rawResultChars: 0, results: {}, units: {} };
+    // v1.10: id виклику -> нормалізована назва. Заповнюється з УСІХ assistant-записів,
+    // навіть без usage, бо назва потрібна результату, а не тарифікації.
+    const toolNames = new Map();
     const base = path.basename(file, '.jsonl');
     const fileDefaultSid = UUID_RE.test(base) ? base : null;
     let lastSummary = null;
@@ -567,7 +602,17 @@ function parseFile(file, dirName) {
       }
       if (o.type === 'assistant') {
         const msg = o.message;
-        if (!msg || !msg.usage) return; // skip records without usage
+        if (!msg) return;
+        // v1.10: назви інструментів збираємо ДО перевірки usage — `tool_result`
+        // мусить знайти свою назву навіть якщо запис виклику лишився без usage.
+        if (Array.isArray(msg.content)) {
+          for (const b of msg.content) {
+            if (!b || b.type !== 'tool_use') continue;
+            const tid = stripToolId(b.id);
+            if (tid) toolNames.set(tid, normTool(b.name));
+          }
+        }
+        if (!msg.usage) return; // skip records without usage
         const u = msg.usage;
         agg.rawMsgs++;
         const sid = o.sessionId || fileDefaultSid || base;
@@ -627,6 +672,26 @@ function parseFile(file, dirName) {
         const sid = o.sessionId || fileDefaultSid || base;
         const unit = unitFor(sid, o.agentId, o.isSidechain);
         touch(unit, o);
+        const m0 = o.message;
+        const c0 = m0 && m0.content;
+        // v1.10: облік виводу інструментів. Робиться ДО раннього виходу по
+        // toolUseResult — саме ці записи й несуть результати.
+        if (Array.isArray(c0)) {
+          const ts0 = o.timestamp ? Date.parse(o.timestamp) : NaN;
+          const day0 = Number.isNaN(ts0) ? null : kyivDay(ts0);
+          if (day0) {
+            for (let i = 0; i < c0.length; i++) {
+              const b = c0[i];
+              if (!b || b.type !== 'tool_result') continue;
+              const chars = toolResultChars(b);
+              agg.rawResults++;
+              agg.rawResultChars += chars;
+              const key = stripToolId(b.tool_use_id) || 'x' + hashKey(`${file}|${o.uuid}|${i}`);
+              // назва може бути невідома (виклик лежить в іншому файлі) — тоді ''
+              agg.results[key] = `${day0}|${chars}|${toolNames.get(key) || ''}`;
+            }
+          }
+        }
         if (o.toolUseResult !== undefined) return;
         const m = o.message;
         const c = m && m.content;
@@ -851,13 +916,23 @@ async function main() {
   const sessions = new Map(); // unit key -> merged unit
   const globalMsgs = new Map(); // dedupKey -> { owner, arr }
   const globalTools = new Map(); // tool_use block id -> { owner, fact }
+  // v1.10: вивід інструментів. Ключ — id виклику, тому дедуп глобальний: той самий
+  // результат зустрічається і двічі в одному файлі, і в двох файлах одразу.
+  const globalResults = new Map(); // tool_use id -> "day|chars|tool"
   let rawMsgs = 0;
   let malformed = 0;
+  let rawResults = 0;
+  let rawResultChars = 0;
 
   for (const agg of results) {
     if (!agg) continue;
     malformed += agg.malformed;
     rawMsgs += agg.rawMsgs;
+    rawResults += agg.rawResults || 0;
+    rawResultChars += agg.rawResultChars || 0;
+    for (const [rk, packed] of Object.entries(agg.results || {})) {
+      globalResults.set(rk, packed); // later occurrence wins, as for msgs/tools
+    }
     for (const [key, u] of Object.entries(agg.units)) {
       let m = sessions.get(key);
       if (!m) {
@@ -905,6 +980,7 @@ async function main() {
   }
   const dedupedMsgs = globalMsgs.size;
   const dedupedTools = globalTools.size;
+  const dedupedResults = globalResults.size;
 
   // 4. pricing
   const pricing = await loadPricing(args.verbose);
@@ -1126,6 +1202,48 @@ async function main() {
     }))
     .sort((a, b) => b.costUsd - a.costUsd || a.project.localeCompare(b.project));
 
+  // ---- toolOutput[] (v1.10) -------------------------------------------
+  // Скільки символів кожен інструмент ПОВЕРНУВ у той чи інший київський день.
+  // Це не білінг: те саме повертання ще й перечитується з кешу щоходу, тому
+  // цифри — нижня межа тиску інструментів на контекст.
+  const toolOutDays = new Map(); // day -> Map(tool -> {calls, chars})
+  for (const [rk, packed] of globalResults) {
+    const i1 = packed.indexOf('|');
+    const i2 = packed.indexOf('|', i1 + 1);
+    if (i1 < 0 || i2 < 0) continue;
+    const day = packed.slice(0, i1);
+    const chars = Number(packed.slice(i1 + 1, i2)) || 0;
+    let tool = packed.slice(i2 + 1);
+    if (!tool) {
+      // виклик лежить в іншому файлі або без usage — беремо назву з дедупленої
+      // мапи tool_use; якщо й там немає, результат іде в хвостову корзину
+      const t = globalTools.get(rk);
+      tool = t ? unpackToolFact(t.fact)[0] : OTHER_TOOLS;
+    }
+    let byTool = toolOutDays.get(day);
+    if (!byTool) toolOutDays.set(day, (byTool = new Map()));
+    let cell = byTool.get(tool);
+    if (!cell) byTool.set(tool, (cell = { calls: 0, chars: 0 }));
+    cell.calls++;
+    cell.chars += chars;
+  }
+  const toolOutput = [];
+  for (const day of [...toolOutDays.keys()].sort()) {
+    const rows = [...toolOutDays.get(day).entries()].sort(
+      (a, b) => b[1].chars - a[1].chars || a[0].localeCompare(b[0])
+    );
+    const rest = { calls: 0, chars: 0 };
+    rows.forEach(([tool, cell], i) => {
+      if (i < TOOLS_PER_DAY && tool !== OTHER_TOOLS) {
+        toolOutput.push({ day, tool, calls: cell.calls, chars: cell.chars });
+      } else {
+        rest.calls += cell.calls;
+        rest.chars += cell.chars;
+      }
+    });
+    if (rest.calls) toolOutput.push({ day, tool: OTHER_TOOLS, calls: rest.calls, chars: rest.chars });
+  }
+
   const pricingUsed = {};
   for (const [model, p] of priceByModel) {
     if (model === '<synthetic>') continue;
@@ -1154,6 +1272,7 @@ async function main() {
     projects,
     days,
     sessions: keptSessions,
+    toolOutput,
     rtk,
   };
 
@@ -1169,6 +1288,11 @@ async function main() {
   log(`files:      ${files.length} (parsed ${parsedCount}, cached ${cachedCount})`);
   log(`messages:   ${rawMsgs} raw -> ${dedupedMsgs} after dedup (${rawMsgs - dedupedMsgs} duplicates collapsed)`);
   log(`tool calls: ${dedupedTools} (deduped by tool_use block id)`);
+  log(
+    `tool output: ${rawResults} raw tool_result blocks -> ${dedupedResults} after dedup ` +
+      `(${rawResults - dedupedResults} collapsed), ${(rawResultChars / 1e6).toFixed(1)}M chars raw -> ` +
+      `${(toolOutput.reduce((a, r) => a + r.chars, 0) / 1e6).toFixed(1)}M kept, ${toolOutput.length} day×tool rows`
+  );
   log(`malformed:  ${malformed} lines`);
   log(`sessions:   ${sessionRows.length} total, ${keptSessions.length} kept in snapshot (>= $0.01)`);
   log(`day rows:   ${days.length}`);

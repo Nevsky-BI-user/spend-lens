@@ -301,6 +301,23 @@ Snapshot: new top-level `rtk = {collectedAt, summary, daily, commands}` (schemaV
 - The period filter applies to the daily chart and to the KPI (sum over visible days); the project filter does NOT apply (rtk stats are not per-project) — say so in the subtitle.
 - PDF daily/monthly report: one compact line in the projects/KPI area — «RTK зберіг {tokens} токенів (~${value}) за період» — only when data exists.
 
+## v1.10 Tool-output flow — «звідки течуть токени» (binding)
+
+Motivation (measured 2026-08-19 over transcripts since 2026-08-12): tool results total ≈187M chars ≈47M tokens. Read **62,1 %**, computer-use batches 17,0 %, **Bash only 7,8 %**, Grep 2,2 %, Glob 1,7 %, PowerShell 0,9 %. RTK can only ever touch the Bash slice — that is why its savings look small next to total spend. The dashboard must show this flow permanently instead of leaving the user to guess.
+
+**Collector** (`collect.mjs`, additive): while streaming, map `tool_use.id → name` per file (already done for digests) and, on `type:"user"` messages, accumulate each `tool_result` block's serialized length against that tool. Normalize MCP names as in v1.7a (`mcp__Claude_Browser__*` → `browser`, `mcp__computer-use__*` → `computer`). Aggregate to a new top-level `toolOutput: [{day, tool, calls, chars}]` (day = Kyiv day of the RESULT record; keep top 12 tools per day + `інші`). Facts ride on the same dedup key as digests — a `tool_result` may be written on several lines. Cache: bump `CACHE_VERSION`. Budget: cold run must stay ≤20 s; report measured time and snapshot size delta (expected ≤ +250 KB).
+
+**Web** (`web/src/lib/toolFlow.js`, pure): `toolFlowByDay(toolOutput, {from, to})`, `toolFlowTotals(...)` → per-tool `{tool, calls, chars, tokens, share}` with `tokens = chars / 4` (state the approximation in the UI), `estUsd` at the same blended input price as the RTK card (`rtkValue.blendedInputPrice`), and `RTK_REACHABLE = new Set(['Bash'])` so the card can mark the reachable slice.
+
+**UI** — new card **«Звідки течуть токени інструментів»** on Категорії, directly ABOVE the RTK card (it explains the RTK card's ceiling):
+- Horizontal Pareto of tools by chars for the selected period, value labels in tokens (`фmtTokens`) + share; the RTK-reachable bar(s) painted green `#34C759`, the rest blue `#007AFF`, with a legend «у зоні дії RTK / поза нею».
+- Subtitle names the point: «≈{tokens} токенів вивели інструменти за період. RTK підрізає лише {share} з них — решта приходить від Read, Grep і скриншотів.»
+- A note that chars→tokens is a ≈4:1 approximation, and that this counts what tools RETURNED, not what was billed (cache re-reads multiply it).
+- Absent `toolOutput` (old snapshot) → card does not render.
+- The RTK card's subtitle gains a cross-reference sentence pointing at this card.
+
+**PDF/XLSX**: XLSX gains a «Вивід інструментів» sheet (day, tool, calls, chars, tokens); PDF unchanged (space is tight).
+
 ## Privacy (public repo!)
 
 `.gitignore` MUST cover: `web/public/data/usage.json`, `collector/.cache/`, `collector/.env`, `node_modules`, `dist`. No real usage numbers, session titles, client/project names, or `HEAVY_METAL` username in committed files — docs use `%USERPROFILE%`. demo.json = synthetic projects («proj-alpha», «proj-beta»...). README in Ukrainian.

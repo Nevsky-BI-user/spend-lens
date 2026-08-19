@@ -18,11 +18,14 @@ import {
   projectSidechainStats, groupSmallProjects, plural,
 } from '../lib/analytics.js';
 import { SMALL_PROJECT_USD } from '../lib/rules.js';
+import { hasToolFlowInWindow } from '../lib/toolFlow.js';
+import { rtkWindow } from '../lib/rtkValue.js';
 import { fmtUsd, fmtUsdCompact, fmtDayShort, fmtPct, shortModel } from '../lib/format.js';
 import { Card } from './ui.jsx';
 import EfficiencyGroup from './EfficiencyGroup.jsx';
 import HeatmapCard from './HeatmapCard.jsx';
 import RtkCard from './RtkCard.jsx';
+import ToolFlowCard from './ToolFlowCard.jsx';
 import {
   GRID, X_PROPS, Y_PROPS, ChartTooltip, LegendRow, buildModelColors,
   useMediaQuery, useChartHeight, useHBarAxis, PHONE_MEDIA,
@@ -284,8 +287,24 @@ export default function CategoriesTab({
         </Card>
       </div>
 
+      {/* v1.10: потік виводу інструментів стоїть НАД карткою RTK — він пояснює
+          її стелю (RTK дотягується лише до Bash-скибки цього потоку). */}
+      <ToolFlowCard
+        toolOutput={snapshot.toolOutput}
+        allDays={allDays || days}
+        pricingUsed={snapshot.pricingUsed}
+        period={period}
+        day={day}
+        anchorDay={anchorDay}
+        isPhone={isPhone}
+      />
+
       <RtkCard
         rtk={snapshot.rtk}
+        crossRef={hasToolFlowInWindow(
+          snapshot.toolOutput,
+          rtkWindow({ period, day, anchorDay })
+        )}
         allDays={allDays || days}
         pricingUsed={snapshot.pricingUsed}
         period={period}
