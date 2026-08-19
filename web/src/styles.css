@@ -1423,3 +1423,12 @@ button { font-family: inherit; }
   .sessions-table td, .sessions-table th { overflow-wrap: anywhere; }
   .cell-title { max-width: none; }
 }
+
+/* v1.8: вкладки ніколи не ламаються на два рядки. `.tabs` — фіксований блок,
+   гнучкий у ряду лише селект проєкту; експорт переїхав у шапку, бо це дія,
+   а не фільтр, і саме він з'їдав місце, якого бракувало вкладкам. */
+@media screen and (min-width: 861px) {
+  .tabs { flex-wrap: nowrap; flex: 0 0 auto; }
+}
+.app-meta { flex-wrap: wrap; }
+.app-meta .toolbar-btn { margin-left: 4px; }

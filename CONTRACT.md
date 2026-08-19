@@ -275,6 +275,9 @@ On Огляд the card moves to the LAST position (after «Топ проєкті
 ### 3. Дрібні проєкти → «Інші» з розгортанням
 `SMALL_PROJECT_USD = 50` in rules.js. In «Де живуть витрати» (Категорії) and the Проєкти tab, projects with `costUsd < 50` collapse into one gray row «Інші — N проєктів» with a toggle «Показати всі» / «Згорнути дрібні» (state local to the card, ≥44px target). Guard: if collapsing would leave fewer than 3 individual rows, show the top-5 individually instead (degenerate case: short periods where everything is small). The daily stacked-by-project chart keeps its top-6 rule (a stacked bar with many series is unreadable) — do not change it.
 
+### 3b. Ряд вкладок ніколи не переноситься (already implemented — do not revert)
+`ExportButton` lives in the HEADER (`.app-meta`, next to email/Вийти), NOT in `.filter-toolbar` — it is an action, not a filter, and it was the element that pushed the tab bar onto a second line. `.tabs { flex-wrap: nowrap; flex: 0 0 auto }` at ≥861px; the project select is the only flexible item in the row. Keep this arrangement.
+
 ### 4. Картка «Основні проти субагентів» — перероблення
 Problems: `#007AFF` vs `#32ADE6` read as one colour, and the card is mostly empty space. Required: субагенти switch to orange `#FF9500` (main stays blue `#007AFF`) — a clearly different hue; add a large share figure («19 % витрат — субагенти») with caption; fill the empty space with a ranked list of the top-5 projects by subagent share (mini bar + % + $), so the card answers «де саме субагенти зʼїдають бюджет». Keep the same card height class as its `grid-2` sibling.
 

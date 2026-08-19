@@ -334,6 +334,10 @@ function Dashboard() {
                 <button type="button" className="link-btn" onClick={signOut}>Вийти</button>
               </span>
             )}
+            {/* Експорт живе в шапці, а не в панелі фільтрів: це дія, а не фільтр,
+                і в ряду вкладок він з'їдав місце, через яке вкладки ламались
+                на два рядки (v1.8). */}
+            <ExportButton busy={exportBusy} onClick={doExport} error={exportError} />
           </div>
         </div>
         <p className="app-sub">Куди йдуть гроші в Claude Code — і що з цим робити</p>
@@ -371,7 +375,6 @@ function Dashboard() {
             />
             <ProjectSelect projects={projects} value={project} onChange={setProject} />
             {day && <DayChip label={dayLabel(day)} onClear={clearDay} />}
-            <ExportButton busy={exportBusy} onClick={doExport} error={exportError} />
           </div>
         </div>
         {exportError && (
