@@ -30,6 +30,7 @@ const TABS = [
 ];
 
 const PERIODS = [
+  { value: 1, label: 'Сьогодні' },
   { value: 7, label: '7 днів' },
   { value: 30, label: '30 днів' },
   { value: 0, label: 'Увесь час' },
