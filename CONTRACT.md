@@ -247,6 +247,37 @@ Safety while testing: use `--out <scratchpad path>` for trial runs; overwrite th
 - **XLSX**: «Сесії» sheet gains columns Активність / Області / Правки / Файли / Запит; new sheet «Проєкти».
 - Snapshot v1 fallback: when `digest`/`projects` are absent, all new UI degrades silently (no empty blocks, no crashes).
 
+## v1.8 Relative return, small-project grouping, subagent card, layout (binding)
+
+User feedback, four items. All Ukrainian copy, iOS palette, v1.4 responsive, no truncation.
+
+### 1. Відносна віддача замість порівняння абсолютних сум (core change)
+
+The current anomaly evidence («у 1027 разів дорожча за типову сесію») is rejected as meaningless: a cheap session may have produced nothing, so comparing absolute costs compares nothing. Replace it with **rate comparisons** — cost per unit of produced effect.
+
+NEW pure module `web/src/lib/efficiency.js` (uses v1.7a digests):
+- `sessionRates(session)` → `{usdPerEdit, usdPerKOut, contextPerEdit, outputShare}`; each null when its denominator is 0. Context = `input + cacheRead + cacheWrite5m + cacheWrite1h`.
+- `sessionClass(session)` → `'правки'` when `digest.edits >= 3`, else `'аналіз'`.
+- `baselines(sessions)` → median of each rate **within class**, computed only over sessions with `costUsd >= 0.5` and a non-zero denominator (empty sessions must not drag medians to zero).
+- `returnIndex(session, baselines)` → `{metric, value, median, index, class}` where `index = value / median` (>1 = gірша віддача).
+- `lowReturnSessions(sessions, {minIndex = 3, minCostUsd = 5})` → sorted by `(index − 1) × costUsd` desc — «скільки грошей коштувала саме погана віддача».
+- `dayReturn(days, sessions, timeZone)` → per-day `usdPerEdit` (day edits = sum of `digest.edits` of sessions STARTED that Kyiv day; footnote required) + index vs the median day.
+
+Evidence wording (multiplier in words up to 4×, digits above): «$4,20 за правку — утричі дорожче за вашу медіану ($1,40)»; analysis class: «$0,82 за 1k вихідних токенів — удвічі дорожче за медіану ($0,41)»; day: «$17,30 за правку — вчетверо дорожче за звичний день ($4,10)». NEVER compare a session's absolute cost to another session's absolute cost anywhere in the UI, PDF or XLSX.
+
+The `ANOMALY` flag keeps its detection for DAYS (budget awareness) but its evidence must also be rate-based; the session-level absolute-cost anomaly is REPLACED by low-return detection. Card renamed **«Слабка віддача»**, subtitle «Сесії, де кожна одиниця роботи коштувала помітно дорожче за вашу норму».
+
+NEW card **«Віддача на витрачене»** in the Ефективність group (Категорії): KPI trio (медіана $ за правку, медіана контексту на правку, частка виходу), horizontal bars of projects by `usdPerEdit` (top-8, «менше — краще», median reference line), and a list of the 5 worst-index sessions.
+
+### 2. Аномалії/Слабка віддача — вниз сторінки
+On Огляд the card moves to the LAST position (after «Топ проєктів за період»).
+
+### 3. Дрібні проєкти → «Інші» з розгортанням
+`SMALL_PROJECT_USD = 50` in rules.js. In «Де живуть витрати» (Категорії) and the Проєкти tab, projects with `costUsd < 50` collapse into one gray row «Інші — N проєктів» with a toggle «Показати всі» / «Згорнути дрібні» (state local to the card, ≥44px target). Guard: if collapsing would leave fewer than 3 individual rows, show the top-5 individually instead (degenerate case: short periods where everything is small). The daily stacked-by-project chart keeps its top-6 rule (a stacked bar with many series is unreadable) — do not change it.
+
+### 4. Картка «Основні проти субагентів» — перероблення
+Problems: `#007AFF` vs `#32ADE6` read as one colour, and the card is mostly empty space. Required: субагенти switch to orange `#FF9500` (main stays blue `#007AFF`) — a clearly different hue; add a large share figure («19 % витрат — субагенти») with caption; fill the empty space with a ranked list of the top-5 projects by subagent share (mini bar + % + $), so the card answers «де саме субагенти зʼїдають бюджет». Keep the same card height class as its `grid-2` sibling.
+
 ## Privacy (public repo!)
 
 `.gitignore` MUST cover: `web/public/data/usage.json`, `collector/.cache/`, `collector/.env`, `node_modules`, `dist`. No real usage numbers, session titles, client/project names, or `HEAVY_METAL` username in committed files — docs use `%USERPROFILE%`. demo.json = synthetic projects («proj-alpha», «proj-beta»...). README in Ukrainian.
