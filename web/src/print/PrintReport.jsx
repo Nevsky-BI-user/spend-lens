@@ -690,6 +690,7 @@ export default function PrintReport({ type, date, budget = '' }) {
 
       <footer className="print-footer">
         spend-lens · джерело цін: {snapshot.pricingSource === 'litellm' ? 'LiteLLM' : 'вбудована таблиця'}
+        {' · '}за тарифами Claude API; на підписці це вартість роботи, а не рахунок
       </footer>
 
       {/* Маркер для PDF-пайплайна: рендериться ЛИШЕ після завантаження даних */}
