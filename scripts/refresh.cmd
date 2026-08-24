@@ -30,7 +30,10 @@ if not "%RC%"=="0" (
   echo.
   echo Collector failed with exit code %RC%.
   echo Log: collector\.cache\last-run.log
-  pause
+  rem Only wait for a keypress when a human is watching. Under a scheduled task
+  rem or a redirected shell "pause" hangs forever - that exact trap left three
+  rem orphaned shells running for 45 minutes on 2026-08-24.
+  echo %CMDCMDLINE% | find /i "/c" >nul && pause
   exit /b %RC%
 )
 
