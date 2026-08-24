@@ -170,3 +170,24 @@ export function ExportButton({ busy, onClick, error = null }) {
 export function EmptyState({ text }) {
   return <div className="empty-state">{text}</div>;
 }
+
+/**
+ * Кнопка «Оновити» (v1.11). Перечитує дані БЕЗ перезавантаження сторінки:
+ * фільтри, вкладка й прокрутка лишаються на місці. `stale` — підсвітка, коли
+ * дані старші за поріг: інакше кнопку не помічають і дивляться на вчорашні цифри.
+ */
+export function RefreshButton({ busy, stale, onClick, title }) {
+  return (
+    <button
+      type="button"
+      className={`toolbar-btn refresh-btn${busy ? ' busy' : ''}${stale ? ' stale' : ''}`}
+      onClick={onClick}
+      disabled={busy}
+      title={title || 'Перечитати дані'}
+      aria-label="Оновити дані"
+    >
+      <span className="refresh-icon" aria-hidden="true">⟳</span>
+      {busy ? 'Оновлюю…' : 'Оновити'}
+    </button>
+  );
+}

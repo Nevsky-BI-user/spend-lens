@@ -12,7 +12,7 @@ import { detectDayAnomalies } from './lib/anomalies.js';
 import { analyzeReturn } from './lib/efficiency.js';
 import { parseUrlState, writeUrlState, writeStoredBudget } from './lib/urlState.js';
 import { exportSnapshotXlsx } from './lib/xlsxExport.js';
-import { fmtDateTime, fmtDomMonth } from './lib/format.js';
+import { fmtDateTime, fmtDomMonth, fmtAgo } from './lib/format.js';
 import OverviewTab from './components/OverviewTab.jsx';
 import CategoriesTab from './components/CategoriesTab.jsx';
 import ProjectsTab from './components/ProjectsTab.jsx';
@@ -21,7 +21,7 @@ import FactorsTab from './components/FactorsTab.jsx';
 import ActionsTab from './components/ActionsTab.jsx';
 import LoginCard from './components/LoginCard.jsx';
 import PrintReport from './print/PrintReport.jsx';
-import { Segmented, ProjectSelect, DayChip, ExportButton } from './components/ui.jsx';
+import { Segmented, ProjectSelect, DayChip, ExportButton, RefreshButton } from './components/ui.jsx';
 
 const TABS = [
   { id: 'overview', label: 'Огляд', component: OverviewTab },
@@ -228,6 +228,63 @@ function Dashboard() {
       .catch((e) => setState({ status: 'error', error: e.message }));
   }, [mode]);
 
+  // --- оновлення за запитом (v1.11) ---
+  // Перечитує джерело БЕЗ status:'loading': дашборд лишається на екрані, і
+  // при збої мережі користувач бачить старі дані плюс повідомлення, а не
+  // порожню сторінку замість робочих цифр.
+  const [refreshing, setRefreshing] = useState(false);
+  const [refreshError, setRefreshError] = useState(null);
+  const [nowTs, setNowTs] = useState(() => Date.now());
+
+  const reload = useCallback(async () => {
+    setRefreshing(true);
+    setRefreshError(null);
+    try {
+      if (mode === 'supabase') {
+        const sb = await import('./lib/supabaseData.js');
+        const snap = await sb.fetchSnapshot();
+        setState((prev) => ({ ...prev, status: 'ready', snapshot: snap, demo: false }));
+      } else {
+        const load = mode === 'demo' ? loadDemoSnapshot : loadLocalSnapshot;
+        const { snapshot: snap, demo } = await load();
+        setState((prev) => ({ ...prev, status: 'ready', snapshot: snap, demo }));
+      }
+      setNowTs(Date.now());
+    } catch (e) {
+      setRefreshError(e.message || 'не вдалося оновити');
+    } finally {
+      setRefreshing(false);
+    }
+  }, [mode]);
+
+  // Годинник для «оновлено N хвилин тому» — раз на хвилину, без нього напис
+  // застигає на значенні, яке було в момент завантаження сторінки.
+  useEffect(() => {
+    const id = setInterval(() => setNowTs(Date.now()), 60000);
+    return () => clearInterval(id);
+  }, []);
+
+  // Повернення на вкладку після паузи: якщо дані старші за 10 хвилин —
+  // перечитуємо самі. Дешево (один запит) і рятує від найчастішого сценарію:
+  // вкладка провисіла ніч, зранку показує вчорашній зріз.
+  const generatedAt = snapshot ? snapshot.generatedAt : null;
+  // Поріг «несвіжості» — 3 години: збір іде о 08:00 і 20:00, тож усе, що
+  // старше, майже напевно не містить сьогоднішньої роботи.
+  const dataStale = !!generatedAt && (nowTs - Date.parse(generatedAt)) > 3 * 3600000;
+  useEffect(() => {
+    const onFocus = () => {
+      if (document.hidden || !generatedAt) return;
+      if (Date.now() - Date.parse(generatedAt) > 10 * 60000) reload();
+      else setNowTs(Date.now());
+    };
+    document.addEventListener('visibilitychange', onFocus);
+    window.addEventListener('focus', onFocus);
+    return () => {
+      document.removeEventListener('visibilitychange', onFocus);
+      window.removeEventListener('focus', onFocus);
+    };
+  }, [generatedAt, reload]);
+
   // --- Supabase-режим (динамічний імпорт, щоб не тягнути SDK у demo-збірку) ---
   const loadFromSupabase = useCallback(async (sb, session) => {
     try {
@@ -338,7 +395,23 @@ function Dashboard() {
         <div className="app-title-row">
           <h1>spend-lens</h1>
           <div className="app-meta">
-            {snapshot.generatedAt && <span>Оновлено: {fmtDateTime(snapshot.generatedAt)}</span>}
+            {snapshot.generatedAt && (
+              <span title={`Дані зібрано: ${fmtDateTime(snapshot.generatedAt)}`}>
+                Оновлено: {fmtDateTime(snapshot.generatedAt)}
+                {' · '}
+                <span className={dataStale ? 'age-stale' : 'age-fresh'}>
+                  {fmtAgo(snapshot.generatedAt, nowTs)}
+                </span>
+              </span>
+            )}
+            <RefreshButton
+              busy={refreshing}
+              stale={dataStale}
+              onClick={reload}
+              title={refreshError
+                ? `Не вдалося оновити: ${refreshError}`
+                : 'Перечитати дані (сам збір запускає колектор на машині)'}
+            />
             {email && (
               <span className="user-box">
                 {email}

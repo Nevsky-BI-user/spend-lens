@@ -163,3 +163,21 @@ export function fmtDateTime(iso) {
 export function shortModel(model) {
   return String(model || '').replace(/^claude-/, '').replace(/-\d{8}$/, '');
 }
+
+/**
+ * Вік даних людською мовою: 'щойно', '12 хв тому', '3 год тому', '2 дні тому'.
+ * Потрібен, щоб поруч із часом збору було видно, наскільки цифри свіжі —
+ * інакше «19 серпня, 08:00» о шостій вечора читається як актуальний стан.
+ */
+export function fmtAgo(iso, now = Date.now()) {
+  const t = Date.parse(iso || '');
+  if (!Number.isFinite(t)) return '';
+  const min = Math.round((now - t) / 60000);
+  if (min < 0) return 'щойно';
+  if (min < 2) return 'щойно';
+  if (min < 60) return `${min} ${plural(min, 'хвилину', 'хвилини', 'хвилин')} тому`;
+  const h = Math.round(min / 60);
+  if (h < 24) return `${h} ${plural(h, 'годину', 'години', 'годин')} тому`;
+  const d = Math.round(h / 24);
+  return `${d} ${plural(d, 'день', 'дні', 'днів')} тому`;
+}

@@ -1621,3 +1621,14 @@ button { font-family: inherit; }
 /* Дві примітки під карткою підряд (лічильники за весь час + застереження про
    нижню оцінку) — між ними потрібен повітряний зазор, інакше читаються як одна. */
 .rtk-rank + .muted-text { margin-top: 10px; }
+
+/* v1.11: кнопка «Оновити» та вік даних у шапці. */
+.refresh-btn .refresh-icon { margin-right: 6px; font-size: 14px; line-height: 1; display: inline-block; }
+.refresh-btn.busy .refresh-icon { animation: spin-slow 1s linear infinite; }
+.refresh-btn.stale { border-color: #FF9500; color: #b36a00; }
+.age-fresh { color: #8E8E93; }
+.age-stale { color: #b36a00; font-weight: 500; }
+@keyframes spin-slow { to { transform: rotate(360deg); } }
+@media screen and (prefers-reduced-motion: reduce) {
+  .refresh-btn.busy .refresh-icon { animation: none; }
+}
