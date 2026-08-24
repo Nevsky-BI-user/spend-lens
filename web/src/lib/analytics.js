@@ -138,9 +138,37 @@ export function filterSnapshot(snapshot, { period = 0, project = null, day = nul
 // ---------------------------------------------------------------- KPI --------
 
 /**
- * KPI: Сьогодні / 7 днів / 30 днів / Разом (+% проти попереднього періоду).
+ * Середня вартість АКТИВНОГО дня за весь час: сума днів із витратами,
+ * поділена на кількість таких днів. Дні без споживання (вихідні, відпустка)
+ * у знаменник не йдуть — інакше «типовий день» падає тим нижче, чим більше
+ * ви відпочивали, і будь-який робочий день виглядає аномальним.
+ * `excludeDay` прибирає з бази сам день порівняння: інакше він тягнув би
+ * власне середнє на себе (при 60 днях — на ~1,6 %, і тим сильніше, чим
+ * дорожчий день).
+ */
+export function avgActiveDayCost(days, { excludeDay = null } = {}) {
+  const byDay = new Map();
+  for (const d of days || []) {
+    if (excludeDay && d.day === excludeDay) continue;
+    byDay.set(d.day, (byDay.get(d.day) || 0) + (d.costUsd || 0));
+  }
+  let total = 0, n = 0;
+  for (const c of byDay.values()) {
+    if (c > 0) { total += c; n += 1; }
+  }
+  return { avg: n ? total / n : 0, days: n };
+}
+
+/**
+ * KPI: Сьогодні / 7 днів / 30 днів / Разом.
  * «Сьогодні» = anchorDay (останній день ПОВНОГО снапшота), щоб фільтр
  * за проєктом не зсував вікна на останній активний день проєкту.
+ *
+ * База порівняння різна за задумом:
+ *  - «Сьогодні» — СЕРЕДНІЙ активний день за весь час. Учорашній день як база
+ *    нічого не каже: якщо вчора не працювали, будь-яка сьогоднішня робота дає
+ *    «+∞», а після важкого вчора нормальний день виглядає провалом.
+ *  - решта вікон — попереднє вікно тієї ж довжини (тиждень проти тижня).
  */
 export function computeKpis(days, anchorDay = null) {
   const today = anchorDay || lastDay(days);
@@ -152,11 +180,22 @@ export function computeKpis(days, anchorDay = null) {
     const cur = cost(inRange(from, to));
     const prev = prevFrom ? cost(inRange(prevFrom, prevTo)) : null;
     const deltaPct = prev && prev > 0 ? ((cur - prev) / prev) * 100 : null;
-    return { label, costUsd: cur, deltaPct };
+    return { label, costUsd: cur, deltaPct, deltaNote: 'проти попер. періоду' };
   };
 
+  const todayCost = cost(inRange(today, today));
+  const base = avgActiveDayCost(days, { excludeDay: today });
+  const todayDelta = base.avg > 0 ? ((todayCost - base.avg) / base.avg) * 100 : null;
+
   return [
-    mk('Сьогодні', today, today, shiftDay(today, -1), shiftDay(today, -1)),
+    {
+      label: 'Сьогодні',
+      costUsd: todayCost,
+      deltaPct: todayDelta,
+      deltaNote: 'проти середнього дня',
+      baseAvg: base.avg,
+      baseDays: base.days,
+    },
     mk('7 днів', shiftDay(today, -6), today, shiftDay(today, -13), shiftDay(today, -7)),
     mk('30 днів', shiftDay(today, -29), today, shiftDay(today, -59), shiftDay(today, -30)),
     { label: 'Разом', costUsd: cost(days), deltaPct: null, allTime: true },

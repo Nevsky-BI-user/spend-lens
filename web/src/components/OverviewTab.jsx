@@ -17,7 +17,7 @@ import {
   projectsWithDelta, OTHER_PROJECT,
 } from '../lib/analytics.js';
 import {
-  fmtUsd, fmtUsdCompact, fmtDayShort, fmtDomMonth, fmtPct, monthName, shortModel,
+  fmtUsd, fmtUsdCompact, fmtDayShort, fmtDomMonth, fmtPct, monthName, shortModel, plural,
 } from '../lib/format.js';
 import { Card, Segmented, EmptyState } from './ui.jsx';
 import BudgetCard from './BudgetCard.jsx';
@@ -36,13 +36,20 @@ function KpiCards({ days, anchorDay }) {
   return (
     <div className="kpi-grid">
       {kpis.map((k) => (
-        <div className="card kpi-card" key={k.label}>
+        <div
+          className="card kpi-card"
+          key={k.label}
+          // Підказка розкриває базу: без неї «+148 %» — число без опори.
+          title={k.baseAvg
+            ? `Середній активний день за весь час: ${fmtUsd(k.baseAvg)} (${k.baseDays} ${plural(k.baseDays, 'день', 'дні', 'днів')} зі споживанням; дні без витрат не рахуються)`
+            : undefined}
+        >
           <div className="kpi-label">{k.label}</div>
           <div className="kpi-value">{fmtUsd(k.costUsd)}</div>
           {k.deltaPct != null ? (
             <div className={`kpi-delta ${k.deltaPct >= 0 ? 'up' : 'down'}`}>
               {k.deltaPct >= 0 ? '+' : '−'}{fmtPct(Math.abs(k.deltaPct), 1)}
-              <span className="kpi-delta-note"> проти попер. періоду</span>
+              <span className="kpi-delta-note"> {k.deltaNote || 'проти попер. періоду'}</span>
             </div>
           ) : (
             <div className="kpi-delta muted">{k.allTime ? 'за весь час' : 'немає бази порівняння'}</div>

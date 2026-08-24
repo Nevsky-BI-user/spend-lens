@@ -28,6 +28,7 @@ import {
 import {
   costByProject, costByModel, dailyByModel, cacheEconomics,
   analyzeSessions, computeFactors, buildRecommendations, cumulativeMonthCompare,
+  avgActiveDayCost,
 } from '../lib/analytics.js';
 import { sessionDigestLine, projectActivityMap, capitalizeFirst } from '../lib/digest.js';
 import { valueRtk, RTK_FLOOR_NOTE_SHORT } from '../lib/rtkValue.js';
@@ -501,13 +502,17 @@ function commonKpis(t, tp, period, filtered, { costLabel, withSavings = false, w
 
 function DailyReport({ snapshot, period, budgetUsd }) {
   const cur = filterRange(snapshot, period.from, period.to);
-  const prev = filterRange(snapshot, period.prevFrom, period.prevTo);
   const t = sumDays(cur.days);
-  const tp = sumDays(prev.days);
+  // База для дня — СЕРЕДНІЙ активний день за весь час, а не вчорашній:
+  // вчора могло не бути роботи взагалі, і тоді «+∞ %» нічого не означає.
+  // Дні без споживання у знаменник не входять (див. avgActiveDayCost).
+  const base = avgActiveDayCost(snapshot.days || [], { excludeDay: period.to });
+  const dayPeriod = { ...period, prevName: 'проти середнього дня' };
+  const tp = { ...sumDays([]), cost: base.avg };
 
   return (
     <>
-      <KpiCards kpis={commonKpis(t, tp, period, cur, { costLabel: 'Вартість дня' })} />
+      <KpiCards kpis={commonKpis(t, tp, dayPeriod, cur, { costLabel: 'Вартість дня' })} />
       <RtkLine snapshot={snapshot} period={period} />
       <BudgetBlock snapshot={snapshot} anchorDay={period.to} budgetUsd={budgetUsd} />
       {!cur.days.length ? (
