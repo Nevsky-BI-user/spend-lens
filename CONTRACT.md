@@ -28,6 +28,35 @@ Mode resolution in web app: `import.meta.env.VITE_SUPABASE_URL` set at build →
 - **devops agent**: `.github/**`, `scripts/**`, `README.md`, `.gitignore`
 - Nobody runs `git commit`. Nobody touches another lane.
 
+## Process launch policy (binding, all lanes)
+
+**Nothing in this repo may explicitly open a terminal.** No console window on a
+schedule, no window that pops up on a double-click, no window that lingers
+waiting for a keypress. Every process the project starts on the user's machine
+runs **hidden**; a console is acceptable only when the user themselves typed the
+command into a shell they had already opened.
+
+- **Scheduled tasks**: the `schtasks /TR` string MUST pass `-WindowStyle Hidden`
+  to `powershell.exe` (`register-task.ps1`, `register-report-task.ps1`).
+- **On-demand refresh**: `scripts/refresh.vbs` — wscript.exe (not a console
+  host) + `Shell.Run(cmd, 0, True)`, window style `0`. `scripts/refresh.cmd` is
+  a backwards-compatibility shim only: it hands off to the `.vbs` and exits
+  without printing anything.
+- **Node child processes**: every `spawn` / `spawnSync` / `execFileSync` passes
+  `windowsHide: true` (`collector/rtk.mjs`, `report/pdf.mjs`); browsers are
+  launched `--headless=new`. `cmd.exe /d /c` helpers are allowed only with
+  redirected output, so they reuse the parent's hidden console.
+- **Operational scripts are non-interactive**: no `pause`, no `Read-Host`, no
+  `timeout` whose only purpose is to keep a window readable. A hidden run has
+  nobody to read it, and a blocking prompt hangs the task (see the 2026-08-24
+  incident: three orphaned shells, 45 minutes).
+- **Feedback goes elsewhere**: `collector/.cache/last-run.log` and
+  `report-run.log`, the «Дані оновлено» stamp in the dashboard and the PDF, the
+  «Оновити» button. A failure the user must not miss may raise a message box
+  (`refresh.vbs` does), never a terminal.
+- New helper scripts inherit this rule by default. A visible window needs a
+  written justification in this section before it may be added.
+
 ## JSONL facts (verified on real data, CC v2.1.209)
 
 - Records: JSON per line. Relevant: `type:"assistant"` with `message.usage`, `message.model`, `message.id`, top-level `requestId`, `timestamp`, `sessionId`, `cwd`, `gitBranch`, `version`, `isSidechain`, `uuid`, `parentUuid`. Also `type:"user"` (user turns), `type:"summary"` (`summary` field = session title, `leafUuid`), `customTitle` may exist.
@@ -137,7 +166,8 @@ RLS: enable on all; SELECT for authenticated where `auth.jwt()->>'email' in (sel
 ## Daily schedule
 
 - `scripts/run-collector.ps1` — runs collector, logs to `collector/.cache/last-run.log`.
-- `scripts/register-task.ps1` — `schtasks /Create /TN "spend-lens-daily" /SC DAILY /ST 20:00` running run-collector.ps1 (uses `-ExecutionPolicy Bypass`, absolute paths).
+- `scripts/register-task.ps1` — `schtasks /Create /TN "spend-lens-daily" /SC DAILY /ST 20:00` running run-collector.ps1 (uses `-ExecutionPolicy Bypass`, `-WindowStyle Hidden`, absolute paths).
+- `scripts/refresh.vbs` — on-demand run of the same pipeline with no window at all (see «Process launch policy»); `scripts/refresh.cmd` only delegates to it. run-collector.ps1 also syncs `web/public/data/usage.json` → `web/dist/data/usage.json` when a local build exists.
 - `.github/workflows/deploy.yml` — triggers: push main, `schedule: cron '0 3 * * *'`, workflow_dispatch. Steps: checkout, setup-node 22+cache npm (web/package-lock), npm ci in web, VITE_* from `vars`, build, upload-pages-artifact (web/dist), deploy-pages. Permissions pages:write id-token:write.
 
 ## v1.1 UI upgrades (user feedback, binding)
