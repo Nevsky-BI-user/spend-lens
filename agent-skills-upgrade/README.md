@@ -40,6 +40,15 @@ rayfinn-app/                    пакет для приватного репо:
 REPORT.md                  повний звіт: проєкти, ринок, «Мет Майк», рекомендації
 ```
 
+## Статус застосування (2026-08-25)
+
+Кроки 1 і 4 вже виконані окремими draft PR-ами — лишилося змержити їх і зробити кроки 2–3, 5:
+
+- ✅ **Крок 1 (marketplace)**: [powerbi-craft-marketplace PR #1](https://github.com/Nevsky-BI-user/powerbi-craft-marketplace/pull/1) — 6 оновлених описів, нові `dax-optimization` і `dax-grill` (grilling-патерн Метта Покока), recipes.md; CI validate зелений (Ubuntu + Windows), версії: dax-craft 0.2.0.
+- ✅ **Крок 4 (проєкти)**: [Rayfin_Operational_Monitoring PR #1](https://github.com/Nevsky-BI-user/Rayfin_Operational_Monitoring/pull/1) (хуки+скіли+агент+правки інструкцій; tsc 0, vitest 141/141) і [rayfinn-app PR #4](https://github.com/Nevsky-BI-user/rayfinn-app/pull/4) (скіли+хук+12 spec-файлів+CI; lint 0, vitest 61/61).
+- ⬜ **Кроки 2–3** (claude.ai + локальні `~/.claude/skills`) — лише вручну після мержу кроку 1.
+- ⬜ **Крок 5** (прогін корпусу проб) — після кроку 2.
+
 ## Як застосувати (порядок має значення)
 
 1. **Marketplace (canonical)**: перенести оновлені `SKILL.md` з `skills/` у
