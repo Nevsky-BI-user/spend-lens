@@ -351,3 +351,17 @@ Motivation (measured 2026-08-19 over transcripts since 2026-08-12): tool results
 ## Privacy (public repo!)
 
 `.gitignore` MUST cover: `web/public/data/usage.json`, `collector/.cache/`, `collector/.env`, `node_modules`, `dist`. No real usage numbers, session titles, client/project names, or `HEAVY_METAL` username in committed files — docs use `%USERPROFILE%`. demo.json = synthetic projects («proj-alpha», «proj-beta»...). README in Ukrainian.
+
+Personal identifiers never appear in tracked files: no real e-mail addresses,
+no API keys or tokens, no Supabase project refs, OAuth client ids or other
+tenant ids. Docs, SQL and `.env.example` files carry placeholders only
+(`<your-email@example.com>`, `<ваша пошта>`, `<project-ref>`,
+`YOUR-SERVICE-ROLE-KEY`); the real values are typed in at setup time and live in
+gitignored `.env` files or in the Supabase / GitHub dashboards. The owner's
+e-mail enters `allowed_users` when the migration is run, not in `001_init.sql`.
+The GitHub account that owns this public repo (`Nevsky-BI-user`, the Pages URL)
+is public by definition and may appear. Enforcement on the git side:
+`.claude/hooks/privacy-guard.sh` (PreToolUse on `Bash`, wired in
+`.claude/settings.json`) blocks `git add -A` / `git add .` / `git add -f` and
+any `git add` / `git commit` that names a private file — see
+`.claude/hooks/README.md`.

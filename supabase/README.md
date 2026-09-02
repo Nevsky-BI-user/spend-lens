@@ -22,9 +22,9 @@ Supabase зберігає агрегати витрат (`usage_days`, `sessions
 
 1. У лівому меню панелі Supabase відкрийте **SQL Editor**.
 2. Натисніть **New query**.
-3. Скопіюйте повний вміст файлу [migrations/001_init.sql](migrations/001_init.sql) (лежить поруч із цим README; з кореня репозиторію — `supabase/migrations/001_init.sql`) і вставте в редактор. На Windows найшвидше: `clip < supabase/migrations/001_init.sql` з кореня репозиторію — вміст одразу в буфері обміну.
+3. Скопіюйте повний вміст файлу [migrations/001_init.sql](migrations/001_init.sql) (лежить поруч із цим README; з кореня репозиторію — `supabase/migrations/001_init.sql`) і вставте в редактор. На Windows найшвидше: `clip < supabase/migrations/001_init.sql` з кореня репозиторію — вміст одразу в буфері обміну. У вставленому тексті замініть заповнювач `<your-email@example.com>` (блок «Seed the owner») на пошту вашого Google-акаунта — це перший рядок `allowed_users`.
 4. Натисніть **Run** (або `Ctrl+Enter`).
-5. Перевірка: у розділі **Table Editor** мають з'явитися чотири таблиці — `usage_days`, `sessions_agg`, `meta`, `allowed_users`. У таблиці `allowed_users` вже має бути один рядок: `gotnewmess@gmail.com`.
+5. Перевірка: у розділі **Table Editor** мають з'явитися чотири таблиці — `usage_days`, `sessions_agg`, `meta`, `allowed_users`. У таблиці `allowed_users` вже має бути один рядок: `<ваша пошта>` — адреса, яку ви підставили в міграцію.
 
 Міграція ідемпотентна — повторний запуск нічого не зламає.
 
@@ -40,7 +40,7 @@ Supabase зберігає агрегати витрат (`usage_days`, `sessions
    - **User support email** — ваша пошта.
    - **Developer contact information** — ваша пошта.
    - Збережіть. Додаткові scopes не потрібні: email і профіль надаються за замовчуванням.
-   - Поки застосунок має статус **Testing**, у розділі **Test users** (**Audience → Test users**) додайте `gotnewmess@gmail.com` — інакше Google не пустить на вхід.
+   - Поки застосунок має статус **Testing**, у розділі **Test users** (**Audience → Test users**) додайте `<ваша пошта>` (ту саму адресу, що в `allowed_users`) — інакше Google не пустить на вхід.
 4. Відкрийте **APIs & Services → Credentials** (або **Google Auth Platform → Clients**) → **Create Credentials → OAuth client ID**:
    - **Application type** — **Web application**.
    - **Name** — `spend-lens-web`.
