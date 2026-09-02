@@ -70,6 +70,14 @@ window they explicitly requested. Everything the project starts on its own runs
   `--list` prints the rules. Comments are stripped before matching, so the policy
   text in file headers does not trip it. Validated: 0 hits on the current tree,
   all 17 rules fire on synthetic violations.
+- `scripts/window-lint.mjs --root <dir>` — **the same 17 rules against any other
+  project**. The directory whitelist is spend-lens-specific, so `--root` drops it
+  and walks the whole tree instead (skipping `node_modules`, `dist`, `build`,
+  `vendor`, `.venv`, `target`, `coverage`, `.next`, `out`, `.cache`). The marker's
+  project prefix is optional outside this repo — `allow-window(<reason>)` is
+  enough — and the justification is read from that project's `CONTRACT.md` **or**
+  `CLAUDE.md`. Caveat: with no whitelist, browser-side JavaScript is scanned too,
+  and a page-local `exec(...)` reads as `child_process.exec` under rule #9.
 - `.github/workflows/window-lint.yml` — runs the linter on every push and PR.
 - `.claude/hooks/no-self-launched-terminal.sh` — PreToolUse guard on
   `Bash|Write|Edit`. It **asks** rather than blocks, precisely because an explicit

@@ -47,6 +47,11 @@
 
 - `node scripts/window-lint.mjs` — 17 правил по `scripts/`, `collector/`,
   `report/`, `web/vite.config.js`; ненульовий код виходу на будь-якому спрацюванні;
+- `node scripts/window-lint.mjs --root <тека>` — ті самі 17 правил для **будь-якого
+  іншого проєкту**: білий список тек spend-lens вимикається, сканується все дерево.
+  Префікс проєкту в маркері поза цим репозиторієм необовʼязковий — досить
+  `allow-window(<причина>)`, а обґрунтування читається з `CONTRACT.md` або `CLAUDE.md`
+  того проєкту;
 - `.github/workflows/window-lint.yml` — той самий лінтер на кожен push і PR;
 - `.claude/hooks/no-self-launched-terminal.sh` — PreToolUse-хук на `Bash|Write|Edit`,
   який **питає**, а не блокує: явна вказівка користувача проходить через

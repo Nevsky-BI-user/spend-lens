@@ -31,7 +31,7 @@ has() {
 }
 
 # Свідомий виняток за явним запитом користувача — маркер знімає перевірку.
-has 'spend-lens:allow-window\(' && exit 0
+has '([a-zA-Z0-9_.-]+:)?allow-window\(' && exit 0
 
 hit=""
 
@@ -66,5 +66,5 @@ fi
 
 [ -z "$hit" ] && exit 0
 
-printf '%s' "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"ask\",\"permissionDecisionReason\":\"CLAUDE.md / CONTRACT.md «Process launch policy»: $hit. Самочинно (за розкладом, по кліку, у фоновому конвеєрі) так робити не можна — запускай приховано: -WindowStyle Hidden, windowsHide: true, wscript Shell.Run(...,0,...), --headless=new. Якщо це саме те, що користувач попросив ЯВНО — підтвердь дію і познач рядок маркером spend-lens:allow-window(<причина>), а причину додай у CONTRACT.md.\"}}"
+printf '%s' "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"ask\",\"permissionDecisionReason\":\"CLAUDE.md / CONTRACT.md «Process launch policy»: $hit. Самочинно (за розкладом, по кліку, у фоновому конвеєрі) так робити не можна — запускай приховано: -WindowStyle Hidden, windowsHide: true, wscript Shell.Run(...,0,...), --headless=new. Якщо це саме те, що користувач попросив ЯВНО — підтвердь дію і познач рядок маркером allow-window(<причина>) (префікс проєкту необовʼязковий), а причину додай у CONTRACT.md.\"}}"
 exit 0

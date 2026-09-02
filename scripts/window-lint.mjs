@@ -4,7 +4,7 @@
 // Заборона стосується ЛИШЕ запуску, який програма чи агент ініціює САМА:
 // за розкладом, по кліку, у фоновому конвеєрі. Якщо користувач явно попросив
 // видиме вікно — це дозволено, але має бути позначено маркером у коді:
-//     spend-lens:allow-window(<коротка причина>)
+//     spend-lens:allow-window(<коротка причина>)   (префікс проєкту необовʼязковий)
 // у коментарі того самого рядка або рядка безпосередньо над ним. Для правил
 // рівня 'visible' та сама причина має бути описана в CONTRACT.md → «Process
 // launch policy», інакше маркер не діє (політика вимагає письмового обґрунтування).
@@ -13,17 +13,38 @@
 //   node scripts/window-lint.mjs            # усе дерево (так само --all)
 //   node scripts/window-lint.mjs --staged   # лише проіндексовані файли (pre-commit)
 //   node scripts/window-lint.mjs --list     # показати правила і вийти
+//   node scripts/window-lint.mjs --root <dir>   # будь-який інший проєкт
+//
+// --root знімає білий список каталогів spend-lens і сканує все дерево вказаної
+// теки (крім node_modules, dist, build і подібних): правила однакові для всіх
+// проєктів, специфічна для spend-lens лише розкладка тек.
 // Код виходу: 0 — чисто; 1 — знайдено порушення; 2 — помилка самого лінтера.
 //
 // Zero-dep: лише node:fs / node:path / node:child_process (для --staged).
 // Сам лінтер підкоряється тій самій політиці: нічого не запускає у видимому вікні.
 
 import { readFileSync, existsSync, readdirSync, statSync } from 'node:fs';
-import { join, relative, extname, sep } from 'node:path';
+import { join, relative, extname, sep, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
 
-const ROOT = join(fileURLToPath(new URL('.', import.meta.url)), '..');
+const SELF_ROOT = join(fileURLToPath(new URL('.', import.meta.url)), '..');
+
+// --root <dir> перемикає лінтер на чуже дерево. Розбираємо аргумент тут, бо від
+// нього залежать і корінь сканування, і те, чи діє білий список тек spend-lens.
+function argRoot(argv) {
+  const i = argv.indexOf('--root');
+  if (i === -1) return null;
+  const value = argv[i + 1];
+  if (!value || value.startsWith('--')) {
+    console.error('window-lint: --root потребує шляху до теки проєкту.');
+    process.exit(2);
+  }
+  return resolve(value);
+}
+
+const FOREIGN_ROOT = argRoot(process.argv.slice(2));
+const ROOT = FOREIGN_ROOT || SELF_ROOT;
 
 // Кожне правило перевірено на реальному дереві: 0 хибних спрацювань.
 // level: 'visible' — доведене вікно; 'risk' — залежить від умов.
@@ -75,12 +96,16 @@ const RULES = [
 const SCAN_DIRS = ['scripts', 'collector', 'report'];
 const SCAN_FILES = ['web/vite.config.js'];
 const SCAN_EXT = new Set(['.ps1', '.psm1', '.cmd', '.bat', '.vbs', '.vbe', '.wsf', '.mjs', '.js']);
-const EXCLUDE_RE = /(^|\/)(\.git|node_modules|dist|out|\.cache|agent-skills-upgrade|web\/src|web\/public|web\/dist)(\/|$)/;
+const EXCLUDE_RE = /(^|\/)(\.git|node_modules|dist|out|build|coverage|vendor|target|\.venv|\.next|\.cache|agent-skills-upgrade|web\/src|web\/public|web\/dist)(\/|$)/;
 // Сам лінтер зі сканування виключено: він цитує заборонені патерни в рядкових
 // літералах правил, а не запускає процеси. Його єдиний виклик git — з windowsHide.
+// Порівнюємо за іменем файлу, щоб копія лінтера в чужому дереві теж не ловила себе.
 const SELF = 'scripts/window-lint.mjs';
+function isSelf(rel) { return rel === SELF || rel.endsWith('/window-lint.mjs'); }
 
-const MARKER_RE = /spend-lens:allow-window\(([^)]+)\)/i;
+// Префікс проєкту необовʼязковий: у spend-lens маркер пишуть як
+// spend-lens:allow-window(...), в іншому проєкті достатньо allow-window(...).
+const MARKER_RE = /(?:[\w.-]+:)?allow-window\(([^)]+)\)/i;
 
 function toPosix(p) { return p.split(sep).join('/'); }
 
@@ -93,7 +118,7 @@ function collectFiles(dir, acc) {
     if (EXCLUDE_RE.test(rel)) continue;
     const st = statSync(full);
     if (st.isDirectory()) collectFiles(full, acc);
-    else if (SCAN_EXT.has(extname(name)) && rel !== SELF) acc.push(rel);
+    else if (SCAN_EXT.has(extname(name)) && !isSelf(rel)) acc.push(rel);
   }
   return acc;
 }
@@ -101,8 +126,13 @@ function collectFiles(dir, acc) {
 function targetFiles(staged) {
   if (!staged) {
     const acc = [];
-    for (const d of SCAN_DIRS) collectFiles(join(ROOT, d), acc);
-    for (const f of SCAN_FILES) if (existsSync(join(ROOT, f))) acc.push(f);
+    if (FOREIGN_ROOT) {
+      // Чужий проєкт: розкладка тек невідома, тому скануємо все дерево.
+      collectFiles(ROOT, acc);
+    } else {
+      for (const d of SCAN_DIRS) collectFiles(join(ROOT, d), acc);
+      for (const f of SCAN_FILES) if (existsSync(join(ROOT, f))) acc.push(f);
+    }
     return acc.sort();
   }
   // --staged: лише проіндексовані файли, щоб не гальмувати комміт.
@@ -111,8 +141,8 @@ function targetFiles(staged) {
   return out.split('\n').map(s => s.trim()).filter(Boolean)
     .filter(f => !EXCLUDE_RE.test(f))
     .filter(f => SCAN_EXT.has(extname(f)))
-    .filter(f => SCAN_DIRS.some(d => f.startsWith(d + '/')) || SCAN_FILES.includes(f))
-    .filter(f => f !== SELF)
+    .filter(f => FOREIGN_ROOT || SCAN_DIRS.some(d => f.startsWith(d + '/')) || SCAN_FILES.includes(f))
+    .filter(f => !isSelf(f))
     .filter(f => existsSync(join(ROOT, f)));
 }
 
@@ -150,10 +180,15 @@ function stripComments(line, ext, state) {
   return out;
 }
 
+// Обґрунтування маркера шукаємо в документах політики самого проєкту, що
+// сканується: у spend-lens це CONTRACT.md, в інших проєктах — CLAUDE.md.
 function contractText() {
-  const p = join(ROOT, 'CONTRACT.md');
-  if (!existsSync(p)) return '';
-  return readFileSync(p, 'utf8').toLowerCase().replace(/\s+/g, ' ');
+  let text = '';
+  for (const name of ['CONTRACT.md', 'CLAUDE.md']) {
+    const p = join(ROOT, name);
+    if (existsSync(p)) text += ' ' + readFileSync(p, 'utf8');
+  }
+  return text.toLowerCase().replace(/\s+/g, ' ');
 }
 
 function main() {
@@ -226,7 +261,8 @@ function main() {
   }
 
   if (!violations.length) {
-    console.log(`window-lint: чисто — ${scanned} файл(ів), 0 порушень (${RULES.length} правил).`);
+    const where = FOREIGN_ROOT ? ` у ${FOREIGN_ROOT}` : '';
+    console.log(`window-lint: чисто${where} — ${scanned} файл(ів), 0 порушень (${RULES.length} правил).`);
     return 0;
   }
   console.error(`window-lint: ${violations.length} порушень політики «жодного самочинного термінала»\n`);
