@@ -79,6 +79,8 @@ node collector\collect.mjs --out <file>       # інший файл знімка
 
 Для збірки в режимі Supabase у репозиторії мають бути задані **variables** (не secrets): `VITE_SUPABASE_URL` і `VITE_SUPABASE_ANON_KEY` (*Settings → Secrets and variables → Actions → Variables*). У *Settings → Pages* виберіть джерело **GitHub Actions**.
 
+Операційні кроки — запуск на вимогу, зміна розкладу, перевірка результату, ротація секретів, типові збої — зібрані в [RUNBOOK.md](RUNBOOK.md).
+
 ## Налаштування бекенда (Supabase)
 
 Схема таблиць, RLS-політики, allow-list користувачів і налаштування Google OAuth описані в [supabase/README.md](supabase/README.md). Коротко:
@@ -96,3 +98,14 @@ node collector\collect.mjs --out <file>       # інший файл знімка
 - **Жодних локальних шляхів з іменем користувача** в документації та коді — лише `%USERPROFILE%`.
 - **Доступ до реальних даних у хмарі** захищено RLS: читати таблиці може тільки автентифікований користувач з allow-list (`allowed_users`); анонімний ключ без входу не дає нічого.
 - Service role key живе лише локально в `collector/.env` і ніколи не потрапляє ні в репозиторій, ні у фронтенд.
+- **Жодних особистих ідентифікаторів у файлах під git**: пошт, ключів, ідентифікаторів проєкту Supabase. У документації й міграції — лише заповнювачі (`<your-email@example.com>`, `<project-ref>`); реальні значення підставляються під час налаштування. Хук `.claude/hooks/privacy-guard.sh` блокує `git add -A` / `git add .` і спроби додати приватні файли (правило — [CONTRACT.md](CONTRACT.md) → «Privacy», деталі — [.claude/hooks/README.md](.claude/hooks/README.md)).
+
+## Документи
+
+| Файл | Що в ньому |
+|---|---|
+| [PROJECT.md](PROJECT.md) | Опис системи: компоненти, дані, логіка аналітики, політики оновлення |
+| [RUNBOOK.md](RUNBOOK.md) | Операційна інструкція: запуск на вимогу, розклад, перевірка, секрети, збої |
+| [CONTRACT.md](CONTRACT.md) | Технічна специфікація, обовʼязкова для реалізації |
+| [supabase/README.md](supabase/README.md) | Первинне налаштування бекенда: Supabase, Google OAuth, ключі, доступ |
+| [CLAUDE.md](CLAUDE.md) | Інструкції для агента: запуск процесів, тон спілкування |

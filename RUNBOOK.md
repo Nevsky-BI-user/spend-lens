@@ -1,0 +1,186 @@
+# RUNBOOK — операційна інструкція spend-lens
+
+Що робити руками: запустити, перевірити, змінити розклад, полагодити. Опис системи — [PROJECT.md](PROJECT.md). Технічна специфікація — [CONTRACT.md](CONTRACT.md). Первинне налаштування бекенда — [supabase/README.md](supabase/README.md).
+
+Усе фонове виконується прихованим процесом. Жоден крок нижче не відкриває вікно термінала сам. Команди ви набираєте у вже відкритій оболонці ([CLAUDE.md](CLAUDE.md) §1, [CONTRACT.md](CONTRACT.md) → «Process launch policy»).
+
+---
+
+## 1. Запуск на вимогу
+
+Розклад покриває звичайний ритм. Серед дня дані застарівають. Оновлення — два кроки.
+
+### Крок 1. Зібрати свіжі дані
+
+1. Двічі клацніть `scripts\refresh.vbs`. Ярлик можна винести на робочий стіл.
+2. Вікно не зʼявиться. Збір іде прихованим процесом.
+3. Дочекайтеся, поки вік даних у шапці дашборда стане «щойно».
+4. Подробиці — у `collector\.cache\last-run.log`.
+5. Якщо збір упав, зʼявиться діалог із кодом помилки й шляхом до логу.
+
+Те саме з відкритої оболонки:
+
+```powershell
+schtasks /Run /TN spend-lens-daily
+```
+
+Або напряму, без Планувальника:
+
+```powershell
+node collector\collect.mjs
+```
+
+Скрипт перечитує транскрипти, оновлює снапшот, заливає агрегати в Supabase і синхронізує копію для локального перегляду.
+
+Старий `scripts\refresh.cmd` лишився тільки заради наявних ярликів. Він мовчки передає роботу `refresh.vbs` і одразу завершується.
+
+### Крок 2. Перечитати дані в дашборді
+
+1. Натисніть кнопку **«Оновити»** в шапці.
+2. Сторінка не перезавантажується. Вкладка, фільтри й прокрутка лишаються на місці.
+
+Поруч із часом збору показано вік даних («щойно», «6 годин тому»). Якщо дані старші за 3 години, кнопка підсвічується помаранчевим. Повернення на вкладку після паузи автоматично перечитує дані, якщо вони старші за 10 хвилин.
+
+Розподіл ролей: кнопка **читає** джерело (Supabase або локальний файл). **Збирає** дані лише колектор на вашій машині. З телефона кнопка покаже те, що востаннє залив колектор.
+
+### Ручні команди
+
+```bash
+node collector/collect.mjs                       # збір даних + Supabase
+node collector/collect.mjs --no-push             # збір без Supabase
+node collector/collect.mjs --verbose             # докладний лог
+node report/report.mjs --type daily --no-send    # PDF за вчора, без листа
+node report/report.mjs --type monthly            # PDF за минулий місяць + лист
+node report/report.mjs --type yearly             # PDF за минулий рік + лист
+npm --prefix web run dev                         # дашборд локально
+```
+
+Звіт за конкретну дату — `--date 2026-08-15`. Щоденний звіт візьме 14 серпня.
+
+---
+
+## 2. Розклад і його зміна
+
+### Що і коли
+
+| Що | Коли | Чим запускається | Результат |
+|---|---|---|---|
+| Збір даних + Supabase | **щодня 20:00** | Планувальник Windows, завдання `spend-lens-daily` → `scripts/run-collector.ps1` | Свіжий `usage.json`, оновлена база — дашборд показує новий день |
+| Щоденний звіт | **щодня 08:00** | Завдання `spend-lens-report` → `scripts/run-report.ps1` | Збір даних → PDF **за попередню добу** → лист на пошту |
+| Місячний звіт | **1-го числа, 08:00** | те саме завдання (перевіряє дату) | PDF за попередній місяць |
+| Річний звіт | **1 січня, 08:00** | те саме завдання | PDF за попередній рік |
+| Перепублікація сайту | **щодня 03:00 UTC** і на кожен `git push` у `main` | GitHub Actions, `.github/workflows/deploy.yml` | Оновлена збірка на GitHub Pages |
+
+Ранкове завдання спершу **саме збирає дані**. Тому звіт о 8:00 бачить і вечірню роботу, яка не потрапила у збір о 20:00.
+
+Обидва завдання створюються з умовами запуску, без яких Windows тихо їх пропускає (батарея, пропущений запуск, повтори). Що саме і чому — [PROJECT.md](PROJECT.md) §6.1.
+
+### Зареєструвати або змінити час
+
+Час запуску — параметр `-Time`. Повторна реєстрація перезаписує наявне завдання.
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\register-task.ps1 -Time 21:00
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\register-report-task.ps1 -Time 09:30
+```
+
+Без `-Time` — типові 20:00 і 08:00. Обидва скрипти реєструють `powershell.exe` з `-WindowStyle Hidden`.
+
+### Вимкнути
+
+```powershell
+schtasks /Delete /TN spend-lens-daily /F
+schtasks /Delete /TN spend-lens-report /F
+```
+
+### Перепублікація сайту
+
+Сайт перезбирається сам: щодня о 03:00 UTC і після кожного push у `main`. Вручну — **Actions → Deploy to GitHub Pages → Run workflow**. Розклад задано в `.github/workflows/deploy.yml`, рядок `cron`.
+
+---
+
+## 3. Де дивитися, чи все відпрацювало
+
+Стан завдань Планувальника:
+
+```powershell
+schtasks /Query /TN spend-lens-daily /V /FO LIST
+schtasks /Query /TN spend-lens-report /V /FO LIST
+```
+
+- Успішний запуск — `Last Result: 0`.
+- `0x800710E0` — умови запуску. Перереєструйте завдання (розділ 2). Причина — [PROJECT.md](PROJECT.md) §6.1.
+- `0x1` — дивіться лог.
+
+Де що лежить:
+
+- Лог збору: `collector/.cache/last-run.log`
+- Лог ранкового звіту: `collector/.cache/report-run.log`
+- Готові PDF: `report/out/`
+- Підпис «Дані оновлено: …» у шапці кожного PDF і на дашборді
+- Публікація сайту: вкладка **Actions** у репозиторії
+
+Позначка `pricingSource: fallback` у снапшоті означає, що LiteLLM був недоступний і ціни взято з `collector/pricing.json` ([PROJECT.md](PROJECT.md) §6.3).
+
+---
+
+## 4. Секрети і ротація
+
+| Секрет | Де лежить | Хто використовує |
+|---|---|---|
+| `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` | `collector/.env` (поза git) | колектор — запис у Supabase |
+| `REPORT_TO`, `SMTP_USER`, `SMTP_APP_PASSWORD`, `MONTHLY_BUDGET_USD` | `report/.env` (поза git) | звіти — лист на пошту |
+| `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY` | GitHub → Settings → Variables | збірка сайту; публічні за призначенням, дані захищає RLS |
+
+**Сервісний ключ ніколи не залишає компʼютер.** Він обходить RLS і дає повний доступ до бази.
+
+Куди покласти ключі при першому налаштуванні — [supabase/README.md](supabase/README.md) §6. Правила безпеки ключів — там само, §7. Шаблони — `collector/.env.example`, `report/.env.example`.
+
+### Сервісний ключ засвітився
+
+Лог, скриншот, коміт, чужий екран — будь-що.
+
+1. Перевипустіть ключ у Supabase: **Project Settings → API**.
+2. Запишіть новий у `collector/.env`.
+3. Запустіть збір: `node collector\collect.mjs`. Успішний запис у Supabase підтверджує ключ.
+
+### Пароль застосунку Google не працює
+
+1. Створіть новий: Google-акаунт → **Security → App passwords**.
+2. Запишіть у `report/.env` → `SMTP_APP_PASSWORD`.
+3. Перевірте: `node report/report.mjs --type daily`. Лист має прийти.
+
+### anon-ключ перевипущено
+
+1. Оновіть variable `VITE_SUPABASE_ANON_KEY` у GitHub (`gh variable set …`, [supabase/README.md](supabase/README.md) §6.2).
+2. Перезапустіть workflow деплою (розділ 2).
+
+---
+
+## 5. Керування доступом
+
+Дані читає лише пошта з таблиці `allowed_users`. Хто не в таблиці — увійде, але побачить «Доступ заборонено».
+
+Додати або забрати доступ — два SQL-запити через **SQL Editor**: [supabase/README.md](supabase/README.md) §8. Зміни діють одразу, передеплой не потрібен.
+
+---
+
+## 6. Відомі збої
+
+| Симптом | Причина | Що робити |
+|---|---|---|
+| Звіт не прийшов о 8:00 | Компʼютер був вимкнений або умови запуску | Перевірити `Last Result` (розділ 3); при `0x800710E0` перереєструвати завдання (розділ 2) |
+| Лист не надійшов, PDF є | Немає або застарів пароль застосунку | Оновити `SMTP_APP_PASSWORD` у `report/.env` (розділ 4) |
+| На сайті старі числа | Збір не відпрацював або кеш браузера | `node collector/collect.mjs`, потім Ctrl+Shift+R |
+| «Доступ заборонено» на сайті | Пошта не в білому списку | Додати рядок у таблицю `allowed_users` (розділ 5) |
+| Google каже `redirect_uri_mismatch` | У Google Cloud не той redirect URI | Має бути `https://<project-ref>.supabase.co/auth/v1/callback` |
+| Завдання висить, `schtasks` показує «Running» довше години | Скрипт чекає на введення (`pause`, `Read-Host`) у прихованому вікні | Завершити процеси `powershell.exe`; прибрати блокуючий запит — [PROJECT.md](PROJECT.md) §6.4 |
+| У снапшоті `pricingSource: fallback` | Немає мережі до LiteLLM | Одноразово — нічого; постійно — звірити `collector/pricing.json` з реальними цінами |
+
+---
+
+## 7. Первинне налаштування
+
+Проєкт Supabase, міграція, Google OAuth, URL-адреси автентифікації, email OTP, куди покласти ключі — [supabase/README.md](supabase/README.md). Перед запуском міграції підставте свою пошту замість заповнювача `<your-email@example.com>`.
+
+Планувальник Windows — розділ 2 цього документа. Репозиторні змінні для збірки сайту — [README.md](README.md) → «Щоденний розклад».
