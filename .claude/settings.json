@@ -9,6 +9,16 @@
             "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/no-self-launched-terminal.sh\""
           }
         ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/privacy-guard.sh",
+            "timeout": 10
+          }
+        ]
       }
     ]
   }
