@@ -76,6 +76,30 @@ window they explicitly requested. Everything the project starts on its own runs
   user instruction is allowed: the user can approve, while an agent's own
   initiative does not slip through silently.
 
+### The machine, not just the tree
+
+The linter and the hook police the repository; neither can see a task that is
+already registered on a PC. A task created by an older version keeps its old
+principal until it is re-registered, and a window that flashes every few minutes
+may belong to software that has nothing to do with this project. Two scripts
+close that gap, and neither opens a terminal to do it:
+
+- `scripts/audit-tasks.ps1` (run it as `wscript.exe scripts\tasks.vbs`) —
+  **read-only**. Lists every scheduled task whose principal has a desktop AND
+  whose action is a console host — that combination, and only it, puts a window
+  on screen; every task repeating more often than hourly; and, from
+  `Microsoft-Windows-TaskScheduler/Operational` events 129/200, what actually
+  fired in the last `-HistoryHours` hours and at what cadence, so "something
+  flashed just now" gets a name. Output: a self-dismissing dialog plus
+  `collector/.cache/task-audit.log` (full inventory) and `task-audit-summary.txt`.
+  It names tasks and never disables one — deleting third-party tasks is the
+  owner's decision, not a script's.
+- `scripts/fix-tasks.ps1` (`wscript.exe scripts\tasks.vbs fix`) — re-registers
+  `spend-lens-daily` and `spend-lens-report` through the corrected register
+  scripts and records the resulting `LogonType`; a windowless logon type (S4U /
+  Password / ServiceAccount / None) is the proof the flash is gone. Needed once
+  per machine: fixing the code does not change a task that is already registered.
+
 ### Deliberate exceptions
 
 An exception needs a marker in the code — `spend-lens:allow-window(<reason>)` in a
@@ -201,6 +225,7 @@ RLS: enable on all; SELECT for authenticated where `auth.jwt()->>'email' in (sel
 
 - `scripts/run-collector.ps1` — runs collector, logs to `collector/.cache/last-run.log`.
 - `scripts/register-task.ps1` — `Register-ScheduledTask "spend-lens-daily"`, daily 20:00, running run-collector.ps1 with an **S4U principal** (no interactive logon → no desktop → no window), `-ExecutionPolicy Bypass`, `-WindowStyle Hidden`, `-MultipleInstances IgnoreNew`, absolute paths. Falls back to an interactive principal only if S4U is refused.
+- `scripts/tasks.vbs` — windowless entry point for the two task tools: no argument (or `audit`) runs `scripts/audit-tasks.ps1` (read-only inventory + what actually fired, from the Task Scheduler log), `fix` runs `scripts/fix-tasks.ps1` (re-register both spend-lens tasks with the S4U principal). Results land in `collector/.cache/task-audit*.{log,txt}` / `task-fix*.{log,txt}` and in a `Shell.Popup` with a 180-second timeout. See «Process launch policy → The machine, not just the tree».
 - `scripts/refresh.vbs` — on-demand run with no window at all; `refresh.vbs report` drives the report pipeline (see «Process launch policy»); `scripts/refresh.cmd` only delegates to it. run-collector.ps1 also syncs `web/public/data/usage.json` → `web/dist/data/usage.json` when a local build exists.
 - `.github/workflows/deploy.yml` — triggers: push main, `schedule: cron '0 3 * * *'`, workflow_dispatch. Steps: checkout, setup-node 22+cache npm (web/package-lock), npm ci in web, VITE_* from `vars`, build, upload-pages-artifact (web/dist), deploy-pages. Permissions pages:write id-token:write.
 
