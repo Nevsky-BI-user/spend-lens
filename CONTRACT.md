@@ -30,32 +30,66 @@ Mode resolution in web app: `import.meta.env.VITE_SUPABASE_URL` set at build →
 
 ## Process launch policy (binding, all lanes)
 
-**Nothing in this repo may explicitly open a terminal.** No console window on a
-schedule, no window that pops up on a double-click, no window that lingers
-waiting for a keypress. Every process the project starts on the user's machine
-runs **hidden**; a console is acceptable only when the user themselves typed the
-command into a shell they had already opened.
+**Nothing in this repo may open a terminal on its own initiative.** The ban is on
+SELF-INITIATED launches — anything a script, a scheduled task, a double-click
+handler or an agent starts by itself. A visible console is allowed only when the
+user asked for it explicitly: a command they typed into a shell of their own, or a
+window they explicitly requested. Everything the project starts on its own runs
+**hidden**.
 
-- **Scheduled tasks**: the `schtasks /TR` string MUST pass `-WindowStyle Hidden`
-  to `powershell.exe` (`register-task.ps1`, `register-report-task.ps1`).
-- **On-demand refresh**: `scripts/refresh.vbs` — wscript.exe (not a console
-  host) + `Shell.Run(cmd, 0, True)`, window style `0`. `scripts/refresh.cmd` is
-  a backwards-compatibility shim only: it hands off to the `.vbs` and exits
-  without printing anything.
+- **Scheduled tasks**: registered with `Register-ScheduledTask` and an **S4U**
+  principal (`register-task.ps1`, `register-report-task.ps1`). S4U runs the task
+  without an interactive logon — session 0, no desktop — so no window can be
+  created at all. `schtasks /Create` without `/RU /RP /NP` is FORBIDDEN: it
+  produces `LogonType=InteractiveToken`, so the task only ever runs in a session
+  that has a desktop, and `-WindowStyle Hidden` hides the window only after
+  conhost has already drawn it. That was the project's one real violation — a
+  visible flash at 20:00 and 08:00 every day — fixed in v1.13. When S4U is
+  refused (no "Log on as a batch job" right) the scripts fall back to an
+  interactive principal and print a warning saying so.
+- **On-demand runs**: `scripts/refresh.vbs` — wscript.exe (GUI subsystem, never
+  given a console) + `Shell.Run(cmd, 0, True)`, window style `0`. An optional
+  `report` argument drives the report pipeline the same windowless way.
 - **Node child processes**: every `spawn` / `spawnSync` / `execFileSync` passes
-  `windowsHide: true` (`collector/rtk.mjs`, `report/pdf.mjs`); browsers are
-  launched `--headless=new`. `cmd.exe /d /c` helpers are allowed only with
-  redirected output, so they reuse the parent's hidden console.
-- **Operational scripts are non-interactive**: no `pause`, no `Read-Host`, no
-  `timeout` whose only purpose is to keep a window readable. A hidden run has
-  nobody to read it, and a blocking prompt hangs the task (see the 2026-08-24
-  incident: three orphaned shells, 45 minutes).
+  `windowsHide: true`; browsers are launched `--headless=new` — `windowsHide`
+  suppresses a console, never a GUI window. `cmd.exe /d /c` helpers are allowed
+  only with redirected output, so they reuse the parent's hidden console.
+- **No blocking prompt anywhere**: no `pause`, no `Read-Host`, no `timeout /t`,
+  and no modal `MsgBox`. A modal dialog in a non-interactive session renders on an
+  invisible window station where nobody can dismiss it, and the task hangs until
+  its execution limit — the 2026-08-24 failure (three orphaned shells, 45 min).
+  `refresh.vbs` uses `Shell.Popup` with a 60-second timeout instead.
 - **Feedback goes elsewhere**: `collector/.cache/last-run.log` and
   `report-run.log`, the «Дані оновлено» stamp in the dashboard and the PDF, the
-  «Оновити» button. A failure the user must not miss may raise a message box
-  (`refresh.vbs` does), never a terminal.
-- New helper scripts inherit this rule by default. A visible window needs a
-  written justification in this section before it may be added.
+  «Оновити» button.
+
+### Enforcement — code, not prose
+
+- `scripts/window-lint.mjs` — 17 rules over `scripts/`, `collector/`, `report/`,
+  `web/vite.config.js`; exit 1 on any hit. `--staged` for a pre-commit hook,
+  `--list` prints the rules. Comments are stripped before matching, so the policy
+  text in file headers does not trip it. Validated: 0 hits on the current tree,
+  all 17 rules fire on synthetic violations.
+- `.github/workflows/window-lint.yml` — runs the linter on every push and PR.
+- `.claude/hooks/no-self-launched-terminal.sh` — PreToolUse guard on
+  `Bash|Write|Edit`. It **asks** rather than blocks, precisely because an explicit
+  user instruction is allowed: the user can approve, while an agent's own
+  initiative does not slip through silently.
+
+### Deliberate exceptions
+
+An exception needs a marker in the code — `spend-lens:allow-window(<reason>)` in a
+comment on the same or the previous line — AND, for `visible`-level rules, the same
+reason written down in this section. The linter rejects a marker whose reason is
+not here.
+
+- **`scripts/refresh.cmd` — за явним запитом користувача: сумісність із наявними
+  ярликами.** A double-clicked `.cmd` flashes a console before cmd.exe parses its
+  first line; that cannot be fixed from inside a `.cmd`. The file is kept only so
+  existing desktop shortcuts keep working — it prints nothing, waits for nothing
+  and hands off to `refresh.vbs`. The flash follows a user's double-click, so it is
+  user-initiated, not self-initiated. New shortcuts must point at
+  `scripts/refresh.vbs`.
 
 ## JSONL facts (verified on real data, CC v2.1.209)
 
@@ -166,8 +200,8 @@ RLS: enable on all; SELECT for authenticated where `auth.jwt()->>'email' in (sel
 ## Daily schedule
 
 - `scripts/run-collector.ps1` — runs collector, logs to `collector/.cache/last-run.log`.
-- `scripts/register-task.ps1` — `schtasks /Create /TN "spend-lens-daily" /SC DAILY /ST 20:00` running run-collector.ps1 (uses `-ExecutionPolicy Bypass`, `-WindowStyle Hidden`, absolute paths).
-- `scripts/refresh.vbs` — on-demand run of the same pipeline with no window at all (see «Process launch policy»); `scripts/refresh.cmd` only delegates to it. run-collector.ps1 also syncs `web/public/data/usage.json` → `web/dist/data/usage.json` when a local build exists.
+- `scripts/register-task.ps1` — `Register-ScheduledTask "spend-lens-daily"`, daily 20:00, running run-collector.ps1 with an **S4U principal** (no interactive logon → no desktop → no window), `-ExecutionPolicy Bypass`, `-WindowStyle Hidden`, `-MultipleInstances IgnoreNew`, absolute paths. Falls back to an interactive principal only if S4U is refused.
+- `scripts/refresh.vbs` — on-demand run with no window at all; `refresh.vbs report` drives the report pipeline (see «Process launch policy»); `scripts/refresh.cmd` only delegates to it. run-collector.ps1 also syncs `web/public/data/usage.json` → `web/dist/data/usage.json` when a local build exists.
 - `.github/workflows/deploy.yml` — triggers: push main, `schedule: cron '0 3 * * *'`, workflow_dispatch. Steps: checkout, setup-node 22+cache npm (web/package-lock), npm ci in web, VITE_* from `vars`, build, upload-pages-artifact (web/dist), deploy-pages. Permissions pages:write id-token:write.
 
 ## v1.1 UI upgrades (user feedback, binding)

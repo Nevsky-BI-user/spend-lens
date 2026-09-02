@@ -52,6 +52,8 @@ npm run dev
 
 Відкрийте адресу, яку покаже Vite. Без `usage.json` застосунок автоматично покаже демо-дані — це нормальний стан «з коробки».
 
+Оновити дані без вікна (те, що робить розклад, але на вимогу): подвійний клік на `scripts\refresh.vbs`, або ярлик на `wscript.exe "<репо>\scripts\refresh.vbs" report` для звітного конвеєра.
+
 Корисні прапорці колектора:
 
 ```powershell
@@ -60,6 +62,12 @@ node collector\collect.mjs --no-push          # без відправлення 
 node collector\collect.mjs --source <dir>     # інша тека з *.jsonl
 node collector\collect.mjs --out <file>       # інший файл знімка
 ```
+
+## Запуск: нічого не відкриває термінал самочинно
+
+Усе, що проєкт запускає сам — за розкладом чи по кліку, — виконується прихованим процесом: завдання Планувальника реєструються з принципалом S4U (без входу в систему, у сесії без десктопу), оновлення на вимогу йде через `scripts\refresh.vbs` (`wscript.exe`, стиль вікна `0`), а всі дочірні процеси Node — з `windowsHide: true` і `--headless=new`. Консоль лишається нормальним інструментом там, де команду набирає сам користувач: приклади нижче — саме такі.
+
+Правило перевіряється автоматично: `node scripts/window-lint.mjs` (17 правил), той самий лінтер у CI на кожен push і PR, плюс PreToolUse-хук для агента. Деталі — [CONTRACT.md → Process launch policy](CONTRACT.md) і [PROJECT.md §6.7](PROJECT.md).
 
 ## Щоденний розклад: два незалежні механізми
 
@@ -72,7 +80,7 @@ node collector\collect.mjs --out <file>       # інший файл знімка
    powershell -NoProfile -ExecutionPolicy Bypass -File scripts\register-task.ps1
    ```
 
-   Це створює завдання `spend-lens-daily`, яке щодня о 20:00 виконує `scripts\run-collector.ps1`. Лог останнього запуску: `collector\.cache\last-run.log`. Видалити завдання: `schtasks /Delete /TN "spend-lens-daily" /F`.
+   Це створює завдання `spend-lens-daily` (принципал S4U — виконується без входу в систему, без вікна), яке щодня о 20:00 виконує `scripts\run-collector.ps1`. Лог останнього запуску: `collector\.cache\last-run.log`. Видалити завдання: `schtasks /Delete /TN "spend-lens-daily" /F`.
 
 2. **Редеплой сайту — GitHub Actions cron (03:00 UTC).**
    Воркфлоу `.github/workflows/deploy.yml` перезбирає і публікує SPA на GitHub Pages: після кожного push у `main`, щодня за розкладом і вручну через *Run workflow*. Щоденний редеплой гарантує, що збірка «підхопить» актуальні змінні середовища, а статичний сайт не застаріває. Самі дані сайт читає із Supabase у рантаймі, тож свіжі цифри з'являються одразу після локального запуску колектора — без редеплою.

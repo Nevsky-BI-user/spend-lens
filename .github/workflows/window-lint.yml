@@ -1,0 +1,30 @@
+name: window-lint
+
+# Примусова перевірка політики «жодного самочинного термінала».
+# Заборона стосується лише самочинного запуску; свідомий виняток за явним
+# запитом користувача позначається маркером spend-lens:allow-window(<причина>)
+# і описується в CONTRACT.md → «Process launch policy».
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Заборона самочинного запуску термінала
+        run: node scripts/window-lint.mjs
