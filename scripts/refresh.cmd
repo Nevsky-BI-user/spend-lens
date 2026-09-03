@@ -9,6 +9,11 @@ rem Explicitly opening a terminal is banned (CONTRACT.md, "Process launch
 rem policy"). A double-clicked .cmd still flashes a console for a fraction of a
 rem second before cmd.exe can hand off - that flash is exactly why the real
 rem entry point is scripts\refresh.vbs. Point new shortcuts at the .vbs.
+rem The flash follows the user's own double-click, so it is user-initiated, not
+rem self-initiated: see CONTRACT.md "Process launch policy" -> Deliberate exceptions.
+rem
+rem The report pipeline has a windowless entry point too. Point a shortcut at:
+rem   wscript.exe "<repo>\scripts\refresh.vbs" report
 rem
 rem Same thing without any file: schtasks /Run /TN spend-lens-daily
 rem
