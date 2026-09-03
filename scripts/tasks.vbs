@@ -4,7 +4,9 @@
 '   wscript.exe tasks.vbs          -> audit (default)
 '   wscript.exe tasks.vbs audit    -> which tasks can put a window on screen,
 '                                     and which of them repeat every few minutes
-'   wscript.exe tasks.vbs fix      -> re-register the two spend-lens tasks as S4U
+'   wscript.exe tasks.vbs fix      -> move every task that flashes a console onto
+'                                     a principal with no desktop: the two
+'                                     spend-lens tasks, plus any claude-* task
 '
 ' The audit is read-only: it names tasks, it never disables or deletes one.
 ' Removing somebody else's scheduled task is the owner's decision, not a

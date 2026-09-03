@@ -107,6 +107,14 @@ close that gap, and neither opens a terminal to do it:
   scripts and records the resulting `LogonType`; a windowless logon type (S4U /
   Password / ServiceAccount / None) is the proof the flash is gone. Needed once
   per machine: fixing the code does not change a task that is already registered.
+  A second pass repairs every task whose name matches `-Name` (default
+  `claude-*`, the tasks a local Claude Code session leaves behind) **in place**
+  with `Set-ScheduledTask`: only the principal changes, the schedule and the
+  action stay as they are. That pass is deliberately narrow — it skips a task
+  that is disabled, already windowless, has no console-host action, or belongs
+  to another account, because moving somebody else's task into a session with no
+  desktop can break it. Widen it explicitly:
+  `powershell -File fix-tasks.ps1 -Name "claude-*","my-own-task"`.
 
 ### Deliberate exceptions
 
@@ -233,7 +241,7 @@ RLS: enable on all; SELECT for authenticated where `auth.jwt()->>'email' in (sel
 
 - `scripts/run-collector.ps1` — runs collector, logs to `collector/.cache/last-run.log`.
 - `scripts/register-task.ps1` — `Register-ScheduledTask "spend-lens-daily"`, daily 20:00, running run-collector.ps1 with an **S4U principal** (no interactive logon → no desktop → no window), `-ExecutionPolicy Bypass`, `-WindowStyle Hidden`, `-MultipleInstances IgnoreNew`, absolute paths. Falls back to an interactive principal only if S4U is refused.
-- `scripts/tasks.vbs` — windowless entry point for the two task tools: no argument (or `audit`) runs `scripts/audit-tasks.ps1` (read-only inventory + what actually fired, from the Task Scheduler log), `fix` runs `scripts/fix-tasks.ps1` (re-register both spend-lens tasks with the S4U principal). Results land in `collector/.cache/task-audit*.{log,txt}` / `task-fix*.{log,txt}` and in a `Shell.Popup` with a 180-second timeout. See «Process launch policy → The machine, not just the tree».
+- `scripts/tasks.vbs` — windowless entry point for the two task tools: no argument (or `audit`) runs `scripts/audit-tasks.ps1` (read-only inventory + what actually fired, from the Task Scheduler log), `fix` runs `scripts/fix-tasks.ps1` (re-register both spend-lens tasks with the S4U principal, then repair any `claude-*` task in place with `Set-ScheduledTask` — principal only, schedule and action untouched; widen with `-Name`). Results land in `collector/.cache/task-audit*.{log,txt}` / `task-fix*.{log,txt}` and in a `Shell.Popup` with a 180-second timeout. See «Process launch policy → The machine, not just the tree».
 - `scripts/refresh.vbs` — on-demand run with no window at all; `refresh.vbs report` drives the report pipeline (see «Process launch policy»); `scripts/refresh.cmd` only delegates to it. run-collector.ps1 also syncs `web/public/data/usage.json` → `web/dist/data/usage.json` when a local build exists.
 - `.github/workflows/deploy.yml` — triggers: push main, `schedule: cron '0 3 * * *'`, workflow_dispatch. Steps: checkout, setup-node 22+cache npm (web/package-lock), npm ci in web, VITE_* from `vars`, build, upload-pages-artifact (web/dist), deploy-pages. Permissions pages:write id-token:write.
 
