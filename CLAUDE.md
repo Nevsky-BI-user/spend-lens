@@ -19,6 +19,9 @@
 - **Планувальник і будь-який фоновий запуск PowerShell** — тільки з
   `-WindowStyle Hidden` (`scripts/register-task.ps1`,
   `scripts/register-report-task.ps1`).
+- **Хук `SessionEnd`** — `scripts/collect-hook.ps1` віддає керування миттєво
+  й піднімає колектор окремим прихованим процесом. Закриття сесії не має
+  чекати на збір, а вікна не має бути видно ні на мить.
 - **Запуск на вимогу** — точка входу `scripts/refresh.vbs`: `wscript.exe` не є
   консольним хостом, `Shell.Run(cmd, 0, True)` дає стиль вікна `0`. Подвійний клік
   по `.cmd` неминуче блимає консоллю, тому `scripts/refresh.cmd` лишився тільки

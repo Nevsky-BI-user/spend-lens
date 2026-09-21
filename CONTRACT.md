@@ -6,7 +6,7 @@ Goal: user glances at dashboard → sees WHERE money burns and WHY → copies a 
 ## Architecture
 
 ```
-Local machine (daily, Task Scheduler 20:00)
+Local machine (SessionEnd hook of Claude Code; the report still runs on Task Scheduler)
   collector/collect.mjs  — parses %USERPROFILE%/.claude/projects/**/*.jsonl (~1.3GB, ~1900 files)
       → writes web/public/data/usage.json   (local snapshot, GITIGNORED — never committed)
       → upserts aggregates to Supabase (if .env configured)
@@ -38,6 +38,10 @@ command into a shell they had already opened.
 
 - **Scheduled tasks**: the `schtasks /TR` string MUST pass `-WindowStyle Hidden`
   to `powershell.exe` (`register-task.ps1`, `register-report-task.ps1`).
+- **SessionEnd hook**: `scripts/collect-hook.ps1` spawns its worker with
+  `Start-Process -WindowStyle Hidden` AND `-WindowStyle Hidden` in the argument
+  list, and returns immediately — the hook itself must never block the session
+  from closing, and no window may appear while it runs.
 - **On-demand refresh**: `scripts/refresh.vbs` — wscript.exe (not a console
   host) + `Shell.Run(cmd, 0, True)`, window style `0`. `scripts/refresh.cmd` is
   a backwards-compatibility shim only: it hands off to the `.vbs` and exits
@@ -166,7 +170,23 @@ RLS: enable on all; SELECT for authenticated where `auth.jwt()->>'email' in (sel
 ## Daily schedule
 
 - `scripts/run-collector.ps1` — runs collector, logs to `collector/.cache/last-run.log`.
-- `scripts/register-task.ps1` — `schtasks /Create /TN "spend-lens-daily" /SC DAILY /ST 20:00` running run-collector.ps1 (uses `-ExecutionPolicy Bypass`, `-WindowStyle Hidden`, absolute paths).
+- `scripts/collect-hook.ps1` — **the primary freshness trigger**: called from the
+  `SessionEnd` hook in `~/.claude/settings.json`, it runs run-collector.ps1 in a
+  hidden background process. Adds a throttle (`-ThrottleHours`, default 3, keyed
+  on the mtime of `last-run.log`), a lock (`collector/.cache/collect.lock`, stale
+  after `-StaleLockMinutes`, default 30) and `-Force` to bypass the throttle.
+  Decisions are logged to `collector/.cache/hook.log`; the hook always exits 0.
+  Rationale: the `spend-lens-daily` task vanished from Task Scheduler unnoticed
+  and the dashboard went stale for two weeks. New transcripts only appear when a
+  Claude Code session ends, so the trigger now sits where the data does.
+- `scripts/register-task.ps1` — `schtasks /Create /TN "spend-lens-daily" /SC DAILY /ST 20:00` running run-collector.ps1 (uses `-ExecutionPolicy Bypass`, `-WindowStyle Hidden`, absolute paths). No longer the primary path; kept as a fallback.
+- `.github/workflows/freshness.yml` — daily `cron '0 6 * * *'` + workflow_dispatch
+  (`max_age_hours`, default 48). Calls `rpc/data_freshness` with the anon key and
+  opens (or comments on) one issue when the data is older than the threshold.
+  The cloud cannot collect — the transcripts are local — but it can notice silence.
+- `supabase/migrations/004_freshness.sql` — `public.data_freshness()`, SECURITY
+  DEFINER, granted to `anon`. Returns only `meta.generatedAt`; no costs, projects
+  or sessions are reachable through it. Exists so CI needs no service-role key.
 - `scripts/refresh.vbs` — on-demand run of the same pipeline with no window at all (see «Process launch policy»); `scripts/refresh.cmd` only delegates to it. run-collector.ps1 also syncs `web/public/data/usage.json` → `web/dist/data/usage.json` when a local build exists.
 - `.github/workflows/deploy.yml` — triggers: push main, `schedule: cron '0 3 * * *'`, workflow_dispatch. Steps: checkout, setup-node 22+cache npm (web/package-lock), npm ci in web, VITE_* from `vars`, build, upload-pages-artifact (web/dist), deploy-pages. Permissions pages:write id-token:write.
 
