@@ -39,14 +39,25 @@ jobs:
           fi
 
           # rpc/data_freshness — міграція 004. Віддає лише позначку часу.
-          raw=$(curl -sS --fail-with-body -X POST \
+          # Код відповіді читаємо окремо: без цього відсутня функція давала б
+          # сиру помилку curl, а не підказку, чого саме бракує.
+          code=$(curl -sS -o /tmp/rpc.json -w '%{http_code}' -X POST \
             "${SUPABASE_URL}/rest/v1/rpc/data_freshness" \
             -H "apikey: ${SUPABASE_ANON_KEY}" \
             -H "Authorization: Bearer ${SUPABASE_ANON_KEY}" \
             -H "Content-Type: application/json" \
             -d '{}')
 
-          generated_at=$(printf '%s' "$raw" | tr -d '"')
+          if [ "$code" = "404" ]; then
+            echo "::error::Функції public.data_freshness немає. Виконайте supabase/migrations/004_freshness.sql у SQL Editor."
+            exit 1
+          fi
+          if [ "$code" != "200" ]; then
+            echo "::error::Supabase відповів HTTP ${code}: $(cat /tmp/rpc.json)"
+            exit 1
+          fi
+
+          generated_at=$(tr -d '"' < /tmp/rpc.json)
           echo "generated_at=${generated_at}" >> "$GITHUB_OUTPUT"
 
           # null приходить, якщо рядка generatedAt у meta немає взагалі —
