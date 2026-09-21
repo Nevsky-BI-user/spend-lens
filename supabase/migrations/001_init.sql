@@ -68,8 +68,10 @@ create table if not exists public.allowed_users (
 );
 
 -- Seed the owner. ON CONFLICT DO NOTHING → re-runs are safe.
+-- Replace the placeholder e-mail with the owner's Google account BEFORE running
+-- (supabase/README.md §2). Never put a real address here — the repo is public.
 insert into public.allowed_users (email)
-values ('gotnewmess@gmail.com')
+values ('<your-email@example.com>')
 on conflict (email) do nothing;
 
 -- ------------------------------------------------------------

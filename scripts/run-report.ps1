@@ -9,7 +9,11 @@
 # Logs to collector/.cache/report-run.log.
 # Compatible with Windows PowerShell 5.1 (no &&, no ternary operators).
 # Intended to be called by Task Scheduler (see register-report-task.ps1) or manually:
-#   powershell -NoProfile -ExecutionPolicy Bypass -File scripts\run-report.ps1
+#   powershell -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File scripts\run-report.ps1
+# Always launched hidden - this script never opens a console of its own and
+# never waits for input (CONTRACT.md, "Process launch policy"). The child
+# cmd.exe calls below have their output redirected, so they reuse this hidden
+# console instead of creating a window.
 
 $ErrorActionPreference = "Continue"
 

@@ -1,0 +1,161 @@
+Корені:
+  [1] /root/.claude/skills/synced
+  [2] /home/user/pbi-skills/skills
+  [3] /home/user/skills-transfer/skills
+  [4] /home/user/nevsky-bi-user/powerbi-craft-marketplace/plugins  ← canonical
+Режим порівняння: лише SKILL.md
+
+DRIFT  dax-measures
+    3525e9d506e3  [4]  (canonical)
+    86f05e378dbb  [2] [1]  (STALE?)
+
+DRIFT  dax-svg
+    904800f5f50f  [4]  (canonical)
+    9755f6afb86c  [2]  (STALE?)
+    ba59049e8b0e  [1]  (STALE?)
+
+DRIFT  deneb-vegalite
+    b457623ccef7  [2] [1]  (STALE?)
+    dd4bc87b4338  [4]  (canonical)
+
+DRIFT  fabric-cli-powerbi
+    71fa4ca7aa16  [2]  (STALE?)
+    dd2a91dcfcf8  [4]  (canonical)
+
+DRIFT  icon-set-manager
+    6d44a0afa572  [4]  (canonical)
+    84b2bc6bd688  [2]  (STALE?)
+    f4c89d8e7a44  [1]  (STALE?)
+
+DRIFT  pbi-ai-visuals
+    cf70dc82a6dc  [2] [3]  (STALE?)
+    dd0045053657  [4]  (canonical)
+
+DRIFT  pbi-bar-column-charts
+    95f2c8ff208f  [4]  (canonical)
+    b6974f270bda  [2] [3]  (STALE?)
+
+DRIFT  pbi-color-accessibility
+    aa3cc448f1c1  [4]  (canonical)
+    ebdc5e3d2a5f  [2] [3]  (STALE?)
+
+DRIFT  pbi-combo-charts
+    56cb27ce7011  [2] [3]  (STALE?)
+    bee1ce22e76d  [4]  (canonical)
+
+DRIFT  pbi-conditional-formatting
+    1ff6278bcb56  [2] [3]  (STALE?)
+    b59712694f7a  [4]  (canonical)
+
+DRIFT  pbi-design-system
+    565d165aca5a  [2] [3]  (STALE?)
+    d9c725145fbf  [4]  (canonical)
+
+DRIFT  pbi-drillthrough
+    2b6a4c983201  [2] [3]  (STALE?)
+    85c087dd4184  [4]  (canonical)
+
+DRIFT  pbi-gauges-progress
+    9e9f6494bb0c  [2] [3]  (STALE?)
+    f47afdda3815  [4]  (canonical)
+
+DRIFT  pbi-headers-icons-imagery
+    22e4e62a0b84  [4]  (canonical)
+    82192c1cd9d0  [2] [3]  (STALE?)
+
+DRIFT  pbi-kpi-cards
+    90b774e47b49  [2] [3]  (STALE?)
+    bd716939772e  [4]  (canonical)
+
+DRIFT  pbi-line-area-charts
+    960bd80291df  [4]  (canonical)
+    cbc25eb58b83  [2] [3]  (STALE?)
+
+DRIFT  pbi-maps-geo
+    58cae9abd3b9  [2] [3]  (STALE?)
+    effdffc91e44  [4]  (canonical)
+
+DRIFT  pbi-matrix
+    9b7583411881  [2] [3]  (STALE?)
+    c12e2ec734b5  [4]  (canonical)
+
+DRIFT  pbi-mobile-layout
+    074ab19341a0  [2] [3]  (STALE?)
+    65c4ff422759  [4]  (canonical)
+
+DRIFT  pbi-navigation-tabs
+    d20bec417549  [4]  (canonical)
+    daa8460e0463  [2] [3]  (STALE?)
+
+DRIFT  pbi-page-layout
+    3ef9002f6d96  [4]  (canonical)
+    ecfca7b0cf6b  [2] [3]  (STALE?)
+
+DRIFT  pbi-part-to-whole
+    30da4d312996  [4]  (canonical)
+    94f2089c6cd0  [2] [3]  (STALE?)
+
+DRIFT  pbi-redesign-approval
+    5b97a88ee77f  [4]  (canonical)
+    c09e67a08067  [2]  (STALE?)
+
+DRIFT  pbi-report-review
+    47072886069a  [2] [3]  (STALE?)
+    e9c23b3a23fe  [4]  (canonical)
+
+DRIFT  pbi-scatter-bubble
+    2c9ed417df1f  [4]  (canonical)
+    b5871b7fd7c1  [2] [3]  (STALE?)
+
+DRIFT  pbi-slicers-filter-panel
+    7ee4934b1ef2  [4]  (canonical)
+    c574b867a514  [2] [3]  (STALE?)
+
+DRIFT  pbi-tables
+    bb53dde659f1  [2] [3]  (STALE?)
+    beb2cb9f1e36  [4]  (canonical)
+
+DRIFT  pbi-theme-json
+    5065dffe1ada  [2] [3]  (STALE?)
+    e46a89e4e222  [4]  (canonical)
+
+DRIFT  pbi-tooltips
+    01dd00b27cbb  [2] [3]  (STALE?)
+    7cd3ea69ace1  [4]  (canonical)
+
+DRIFT  pbi-typography
+    68029ff5124a  [4]  (canonical)
+    bf587892f041  [2] [3]  (STALE?)
+
+DRIFT  pbi-visualization-strategy
+    723add675794  [4]  (canonical)
+    f788ab0df324  [2] [3]  (STALE?)
+
+DRIFT  pbi-waterfall-funnel
+    2eb040330129  [2] [3]  (STALE?)
+    f806074e02ad  [4]  (canonical)
+
+DRIFT  pbip-bootstrap
+    0d6a52ac2f6a  [4]  (canonical)
+    dd6287f763d0  [2] [3]  (STALE?)
+
+DRIFT  pbip-deploy
+    5f8d79af4330  [4]  (canonical)
+    c6a722c99244  [2] [3]  (STALE?)
+
+DRIFT  pbip-pr-reviewer
+    4d81468c1db1  [2] [1]  (STALE?)
+    9fc58e7d2824  [4]  (canonical)
+
+DRIFT  powerbi-bookmarks
+    3b5ed56bfd9c  [4]  (canonical)
+    975e69122252  [2]  (STALE?)
+
+DRIFT  powerbi-visuals
+    c1d1fc9cb731  [4]  (canonical)
+    c5214b08e95d  [2]  (STALE?)
+
+Підсумок:
+  скілів усього: 76; у кількох коренях: 45; лише в одному: 31
+  ідентичних: 8; РОЗБІЖНИХ: 37
+  відсутні в canonical (20): algorithmic-art, brand-guidelines, canvas-design, doc-coauthoring, docx, find-skills, import-memory, internal-comms, mcp-builder, morning, pbi-corp-theme (назву відредаговано), pdf, power-bi-dax-optimization (застарілий — видаляється, див. README крок 2), pptx, skill-creator, slack-gif-creator, theme-factory, web-artifacts-builder, xlsx, youtube-transcript
