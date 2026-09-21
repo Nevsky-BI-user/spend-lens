@@ -1,0 +1,115 @@
+name: Вартовий свіжості даних
+
+# Збирати дані хмара не може — транскрипти Claude Code лежать лише на робочій
+# машині. Але помітити, що вони перестали надходити, вона може цілком.
+# Привід: заплановане завдання зникло з планувальника Windows, і дашборд
+# відставав два тижні, поки це не побачили очима.
+
+on:
+  schedule:
+    # 06:00 UTC — близько 09:00 за Києвом, тобто лист чекає на початок дня.
+    - cron: '0 6 * * *'
+  workflow_dispatch:
+    inputs:
+      max_age_hours:
+        description: 'Поріг застарілості в годинах'
+        required: false
+        default: '48'
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Запитати час останнього пушу
+        id: freshness
+        env:
+          SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ vars.VITE_SUPABASE_ANON_KEY }}
+          MAX_AGE_HOURS: ${{ github.event.inputs.max_age_hours || '48' }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${SUPABASE_URL:-}" ] || [ -z "${SUPABASE_ANON_KEY:-}" ]; then
+            echo "::error::Не задано змінні репозиторію VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY"
+            exit 1
+          fi
+
+          # rpc/data_freshness — міграція 004. Віддає лише позначку часу.
+          raw=$(curl -sS --fail-with-body -X POST \
+            "${SUPABASE_URL}/rest/v1/rpc/data_freshness" \
+            -H "apikey: ${SUPABASE_ANON_KEY}" \
+            -H "Authorization: Bearer ${SUPABASE_ANON_KEY}" \
+            -H "Content-Type: application/json" \
+            -d '{}')
+
+          generated_at=$(printf '%s' "$raw" | tr -d '"')
+          echo "generated_at=${generated_at}" >> "$GITHUB_OUTPUT"
+
+          # null приходить, якщо рядка generatedAt у meta немає взагалі —
+          # це така сама несправність, як і давня дата, тож не окремий випадок.
+          if [ -z "$generated_at" ] || [ "$generated_at" = "null" ]; then
+            echo "::warning::meta.generatedAt порожній"
+            echo "stale=true" >> "$GITHUB_OUTPUT"
+            echo "age_hours=невідомо" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          now=$(date -u +%s)
+          then_ts=$(date -u -d "$generated_at" +%s)
+          age_hours=$(( (now - then_ts) / 3600 ))
+          echo "age_hours=${age_hours}" >> "$GITHUB_OUTPUT"
+          echo "Дані оновлено ${age_hours} год тому (${generated_at})"
+
+          if [ "$age_hours" -gt "$MAX_AGE_HOURS" ]; then
+            echo "stale=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "stale=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Завести issue, якщо дані застаріли
+        if: steps.freshness.outputs.stale == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          AGE: ${{ steps.freshness.outputs.age_hours }}
+          GENERATED_AT: ${{ steps.freshness.outputs.generated_at }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          title="Дані дашборда не оновлюються"
+
+          # Статична частина — у heredoc із лапками: інакше шелл зʼїв би
+          # зворотні слеші у windows-шляхах, а зірочки й лапки markdown
+          # довелося б екранувати поодинці. Динамічні значення дописуються
+          # окремим printf перед нею.
+          {
+            printf 'Останній успішний пуш колектора: `%s` (%s год тому).\n\n' \
+              "$GENERATED_AT" "$AGE"
+            cat <<'BODY'
+          Збирає дані робоча машина — транскрипти Claude Code існують лише на ній.
+          Отже перевіряти треба там, по черзі:
+
+          1. `collector\.cache\hook.log` — чи взагалі викликався хук `SessionEnd`;
+          2. `collector\.cache\last-run.log` — чи падає сам колектор;
+          3. чи на місці запис `SessionEnd` у `~/.claude/settings.json`.
+
+          Разовий збір поза дроселем:
+
+          ```
+          powershell -NoProfile -ExecutionPolicy Bypass -File scripts\collect-hook.ps1 -Force
+          ```
+          BODY
+          } > "$RUNNER_TEMP/body.md"
+
+          # Дедуплікація: вартовий ходить щодня, а issue має лишатися одна.
+          existing=$(gh issue list --repo "$REPO" --state open \
+            --search "in:title \"${title}\"" --json number --jq '.[0].number // empty')
+
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --repo "$REPO" --body-file "$RUNNER_TEMP/body.md"
+          else
+            gh issue create --repo "$REPO" --title "$title" --body-file "$RUNNER_TEMP/body.md"
+          fi

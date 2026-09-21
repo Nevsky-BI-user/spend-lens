@@ -6,7 +6,7 @@
 
 ```mermaid
 flowchart TB
-    subgraph local["Локальна машина (щодня, Task Scheduler 20:00)"]
+    subgraph local["Локальна машина (хук SessionEnd Claude Code)"]
         jsonl["%USERPROFILE%\.claude\projects\**\*.jsonl<br/>(транскрипти Claude Code)"]
         collector["collector/collect.mjs<br/>(парсинг, дедуплікація, агрегація, ціни)"]
         snapshot["web/public/data/usage.json<br/>(локальний знімок — GITIGNORED)"]
@@ -61,20 +61,31 @@ node collector\collect.mjs --source <dir>     # інша тека з *.jsonl
 node collector\collect.mjs --out <file>       # інший файл знімка
 ```
 
-## Щоденний розклад: два незалежні механізми
+## Оновлення: три незалежні механізми
 
-Оновлення даних і оновлення сайту навмисно розділені:
+Збір даних, редеплой сайту й нагляд за свіжістю навмисно розділені:
 
-1. **Свіжість даних — локальний Task Scheduler (20:00 за місцевим часом).**
-   Транскрипти Claude Code існують лише на вашій машині, тому тільки вона може їх зібрати. Заплановане завдання щодня запускає колектор: він оновлює локальний `usage.json` і відправляє агрегати в Supabase.
+1. **Свіжість даних — хук `SessionEnd` Claude Code.**
+   Транскрипти Claude Code існують лише на вашій машині, тому тільки вона може їх зібрати; хмара тут не поможе. Збір чіпляється туди, де зʼявляються дані: щойно завершується сесія Claude Code, хук запускає колектор у фоні — вікна не видно, керування повертається миттєво. Не працювали в Claude Code — не було й нових витрат, тож пропущений день нічого не втрачає.
 
-   ```powershell
-   powershell -NoProfile -ExecutionPolicy Bypass -File scripts\register-task.ps1
+   Запис у `~/.claude/settings.json`:
+
+   ```json
+   "SessionEnd": [
+     { "hooks": [ { "type": "command",
+       "command": "powershell -NoProfile -ExecutionPolicy Bypass -File \"C:\\github\\spend-lens\\scripts\\collect-hook.ps1\"",
+       "timeout": 10 } ] }
+   ]
    ```
 
-   Це створює завдання `spend-lens-daily`, яке щодня о 20:00 виконує `scripts\run-collector.ps1`. Лог останнього запуску: `collector\.cache\last-run.log`. Видалити завдання: `schtasks /Delete /TN "spend-lens-daily" /F`.
+   `scripts\collect-hook.ps1` додає до `run-collector.ps1` три речі: **дросель** (не частіше ніж раз на 3 год), **замок** (дві сесії закрилися одночасно — другий запуск виходить) і **фон** (закриття сесії не гальмує на 12 секунд). Логи: `collector\.cache\hook.log` (рішення хука) і `collector\.cache\last-run.log` (сам колектор). Разовий збір поза дроселем — `-Force`.
 
-2. **Редеплой сайту — GitHub Actions cron (03:00 UTC).**
+   Раніше тут було заплановане завдання Windows. Воно одного дня тихо зникло з планувальника, і дашборд відставав два тижні. Скрипти `scripts\register-task.ps1` і `scripts\register-report-task.ps1` лишаються в репозиторії як запасний шлях, але щоденний збір на них більше не тримається.
+
+2. **Нагляд за свіжістю — GitHub Actions (06:00 UTC).**
+   Воркфлоу `.github/workflows/freshness.yml` питає в Supabase `rpc/data_freshness` (міграція `004_freshness.sql` — функція віддає лише позначку часу й нічого більше) і, якщо дані старші за дві доби, заводить issue. Збирати хмара не може, а помітити тишу — цілком.
+
+3. **Редеплой сайту — GitHub Actions cron (03:00 UTC).**
    Воркфлоу `.github/workflows/deploy.yml` перезбирає і публікує SPA на GitHub Pages: після кожного push у `main`, щодня за розкладом і вручну через *Run workflow*. Щоденний редеплой гарантує, що збірка «підхопить» актуальні змінні середовища, а статичний сайт не застаріває. Самі дані сайт читає із Supabase у рантаймі, тож свіжі цифри з'являються одразу після локального запуску колектора — без редеплою.
 
 Для збірки в режимі Supabase у репозиторії мають бути задані **variables** (не secrets): `VITE_SUPABASE_URL` і `VITE_SUPABASE_ANON_KEY` (*Settings → Secrets and variables → Actions → Variables*). У *Settings → Pages* виберіть джерело **GitHub Actions**.
