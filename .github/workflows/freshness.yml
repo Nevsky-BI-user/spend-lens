@@ -1,13 +1,18 @@
 name: Вартовий свіжості даних
 
-# Збирати дані хмара не може — транскрипти Claude Code лежать лише на робочій
+# Збирати дані хмара не може: транскрипти Claude Code лежать лише на робочій
 # машині. Але помітити, що вони перестали надходити, вона може цілком.
 # Привід: заплановане завдання зникло з планувальника Windows, і дашборд
 # відставав два тижні, поки це не побачили очима.
+#
+# Канал сповіщення: issue, а не червоний прогін. Прогін, що падає, шле лист
+# щодня, поки проблему не виправлено; issue заводиться один раз і сама
+# закривається, щойно все повертається в норму. Червоним прогін стає лише на
+# справді неочікуваному: Supabase відповів не 200 і не 404.
 
 on:
   schedule:
-    # 06:00 UTC — близько 09:00 за Києвом, тобто лист чекає на початок дня.
+    # 06:00 UTC: близько 09:00 за Києвом, тобто лист чекає на початок дня.
     - cron: '0 6 * * *'
   workflow_dispatch:
     inputs:
@@ -24,23 +29,55 @@ jobs:
   check:
     runs-on: ubuntu-latest
     steps:
-      - name: Запитати час останнього пушу
-        id: freshness
+      - name: Перевірити свіжість і оновити issue
         env:
           SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
           SUPABASE_ANON_KEY: ${{ vars.VITE_SUPABASE_ANON_KEY }}
           MAX_AGE_HOURS: ${{ github.event.inputs.max_age_hours || '48' }}
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
 
+          STALE_TITLE="Дані дашборда не оновлюються"
+          SETUP_TITLE="Вартовий свіжості не налаштований"
+          BODY="$RUNNER_TEMP/body.md"
+
+          open_issue() {
+            gh issue list --repo "$REPO" --state open \
+              --search "in:title \"$1\"" --json number --jq '.[0].number // empty'
+          }
+
+          # Заводить issue, лише якщо такої ще немає відкритої. Щоденних
+          # коментарів навмисно немає: одна проблема, один лист.
+          raise() {
+            if [ -n "$(open_issue "$1")" ]; then
+              echo "Issue «$1» уже відкрита, нову не заводимо"
+            else
+              gh issue create --repo "$REPO" --title "$1" --body-file "$BODY"
+            fi
+          }
+
+          resolve() {
+            n=$(open_issue "$1")
+            if [ -n "$n" ]; then
+              gh issue close "$n" --repo "$REPO" --comment "$2"
+            fi
+          }
+
           if [ -z "${SUPABASE_URL:-}" ] || [ -z "${SUPABASE_ANON_KEY:-}" ]; then
-            echo "::error::Не задано змінні репозиторію VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY"
-            exit 1
+            cat > "$BODY" <<'MD'
+          Вартовий не знає, куди звертатися: не задано змінні репозиторію
+          `VITE_SUPABASE_URL` і `VITE_SUPABASE_ANON_KEY`
+          (Settings, Secrets and variables, Actions, Variables).
+
+          Issue закриється сама після першого успішного прогону.
+          MD
+            raise "$SETUP_TITLE"
+            exit 0
           fi
 
-          # rpc/data_freshness — міграція 004. Віддає лише позначку часу.
-          # Код відповіді читаємо окремо: без цього відсутня функція давала б
-          # сиру помилку curl, а не підказку, чого саме бракує.
+          # rpc/data_freshness: міграція 004. Віддає лише позначку часу.
           code=$(curl -sS -o /tmp/rpc.json -w '%{http_code}' -X POST \
             "${SUPABASE_URL}/rest/v1/rpc/data_freshness" \
             -H "apikey: ${SUPABASE_ANON_KEY}" \
@@ -49,62 +86,62 @@ jobs:
             -d '{}')
 
           if [ "$code" = "404" ]; then
-            echo "::error::Функції public.data_freshness немає. Виконайте supabase/migrations/004_freshness.sql у SQL Editor."
-            exit 1
+            cat > "$BODY" <<'MD'
+          Вартовий не може прочитати час останнього оновлення: у Supabase немає
+          функції `public.data_freshness`.
+
+          Виправлення: виконати `supabase/migrations/004_freshness.sql` у
+          Supabase, SQL Editor. Функція віддає лише позначку часу, без сум,
+          проєктів і сесій.
+
+          Issue закриється сама після першого успішного прогону.
+          MD
+            raise "$SETUP_TITLE"
+            exit 0
           fi
+
           if [ "$code" != "200" ]; then
             echo "::error::Supabase відповів HTTP ${code}: $(cat /tmp/rpc.json)"
             exit 1
           fi
 
-          generated_at=$(tr -d '"' < /tmp/rpc.json)
-          echo "generated_at=${generated_at}" >> "$GITHUB_OUTPUT"
+          resolve "$SETUP_TITLE" "Функція data_freshness відповідає, вартовий працює."
 
-          # null приходить, якщо рядка generatedAt у meta немає взагалі —
-          # це така сама несправність, як і давня дата, тож не окремий випадок.
+          generated_at=$(tr -d '"' < /tmp/rpc.json)
+
+          # null приходить, якщо рядка generatedAt у meta немає взагалі: це
+          # така сама несправність, як і давня дата, тож не окремий випадок.
           if [ -z "$generated_at" ] || [ "$generated_at" = "null" ]; then
-            echo "::warning::meta.generatedAt порожній"
-            echo "stale=true" >> "$GITHUB_OUTPUT"
-            echo "age_hours=невідомо" >> "$GITHUB_OUTPUT"
+            age_hours="невідомо"
+            stale=true
+          else
+            now=$(date -u +%s)
+            then_ts=$(date -u -d "$generated_at" +%s)
+            age_hours=$(( (now - then_ts) / 3600 ))
+            echo "Дані оновлено ${age_hours} год тому (${generated_at})"
+            stale=false
+            if [ "$age_hours" -gt "$MAX_AGE_HOURS" ]; then
+              stale=true
+            fi
+          fi
+
+          if [ "$stale" = "false" ]; then
+            resolve "$STALE_TITLE" "Дані знову свіжі: останнє оновлення ${generated_at}."
             exit 0
           fi
 
-          now=$(date -u +%s)
-          then_ts=$(date -u -d "$generated_at" +%s)
-          age_hours=$(( (now - then_ts) / 3600 ))
-          echo "age_hours=${age_hours}" >> "$GITHUB_OUTPUT"
-          echo "Дані оновлено ${age_hours} год тому (${generated_at})"
-
-          if [ "$age_hours" -gt "$MAX_AGE_HOURS" ]; then
-            echo "stale=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "stale=false" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Завести issue, якщо дані застаріли
-        if: steps.freshness.outputs.stale == 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
-          AGE: ${{ steps.freshness.outputs.age_hours }}
-          GENERATED_AT: ${{ steps.freshness.outputs.generated_at }}
-          REPO: ${{ github.repository }}
-        run: |
-          set -euo pipefail
-          title="Дані дашборда не оновлюються"
-
-          # Статична частина — у heredoc із лапками: інакше шелл зʼїв би
-          # зворотні слеші у windows-шляхах, а зірочки й лапки markdown
-          # довелося б екранувати поодинці. Динамічні значення дописуються
+          # Статична частина в heredoc із лапками: інакше шелл зʼїв би
+          # зворотні слеші у windows-шляхах. Динамічний рядок дописується
           # окремим printf перед нею.
           {
             printf 'Останній успішний пуш колектора: `%s` (%s год тому).\n\n' \
-              "$GENERATED_AT" "$AGE"
-            cat <<'BODY'
-          Збирає дані робоча машина — транскрипти Claude Code існують лише на ній.
+              "${generated_at:-невідомо}" "$age_hours"
+            cat <<'MD'
+          Збирає дані робоча машина: транскрипти Claude Code існують лише на ній.
           Отже перевіряти треба там, по черзі:
 
-          1. `collector\.cache\hook.log` — чи взагалі викликався хук `SessionEnd`;
-          2. `collector\.cache\last-run.log` — чи падає сам колектор;
+          1. `collector\.cache\hook.log`: чи взагалі викликався хук `SessionEnd`;
+          2. `collector\.cache\last-run.log`: чи падає сам колектор;
           3. чи на місці запис `SessionEnd` у `~/.claude/settings.json`.
 
           Разовий збір поза дроселем:
@@ -112,15 +149,8 @@ jobs:
           ```
           powershell -NoProfile -ExecutionPolicy Bypass -File scripts\collect-hook.ps1 -Force
           ```
-          BODY
-          } > "$RUNNER_TEMP/body.md"
 
-          # Дедуплікація: вартовий ходить щодня, а issue має лишатися одна.
-          existing=$(gh issue list --repo "$REPO" --state open \
-            --search "in:title \"${title}\"" --json number --jq '.[0].number // empty')
-
-          if [ -n "$existing" ]; then
-            gh issue comment "$existing" --repo "$REPO" --body-file "$RUNNER_TEMP/body.md"
-          else
-            gh issue create --repo "$REPO" --title "$title" --body-file "$RUNNER_TEMP/body.md"
-          fi
+          Issue закриється сама, щойно дані знову стануть свіжими.
+          MD
+          } > "$BODY"
+          raise "$STALE_TITLE"
