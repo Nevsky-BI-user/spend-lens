@@ -51,7 +51,7 @@ model: opus
 | `reviewer` | ревʼю diff до коміту |
 | `release-engineer` | деплой, вартовий, розклад |
 
-Глобальні: `exec-haiku` (механіка), `exec-sonnet` (типове за специфікацією), `exec-opus` (складне), `task-planner` (декомпозиція), `ux-baseline-auditor` (аудит React-застосунку). `ado-worklog` тут не застосовний: репозиторій на GitHub. Агенти для PBIP чи Fabric не потрібні.
+Глобальні: `exec-haiku` (механіка), `exec-sonnet` (типове за специфікацією), `exec-opus` (складне), `task-planner` (декомпозиція), `ux-baseline-auditor` (аудит React-застосунку). `ado-worklog` тут не застосовний: репозиторій на GitHub. Агенти для PBIP чи Fabric не потрібні. Куратор скілів: `skill-curator` (глобальний агент), коли набору скілів ще немає, скіл застарів чи повторювана задача просить новий.
 
 ## Ворота
 
