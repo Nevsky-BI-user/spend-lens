@@ -14,7 +14,7 @@ model: opus
 - Стек: JavaScript з JSX, не TypeScript. `web/package.json`: Vite 5, React 18, Recharts 2, supabase-js 2, exceljs (лише ліниво). Колектор і `report/` без залежностей, окрім nodemailer у `report/package.json`.
 - Автотестів, лінтера й typecheck немає. CI (`.github/workflows/deploy.yml`) лише збирає й публікує. Єдина статична перевірка: збірка `web`.
 - Репозиторій публічний: приватні файли тримає лише `.gitignore` (блок PRIVACY-CRITICAL) і хук `.claude/hooks/privacy-guard.sh`, підключений у `.claude/settings.json`. Він блокує масовий `git add`, `-f` і приватні шляхи.
-- Push у `main` одразу публікує сайт (`PROJECT.md` §6.2: `main` єдина гілка). В історії є злиття PR #1-#7 з гілок з префіксом claude, але правил про гілки й мерж у `CLAUDE.md` немає: гілку, мерж і push вирішує користувач.
+- Push у `main` одразу публікує сайт (`PROJECT.md` §6.2: `main` єдина гілка). Зміни приходять і через PR з гілок, але правил про гілки й мерж у `CLAUDE.md` немає: гілку, мерж і push вирішує користувач.
 - Жодного видимого терміналу (`CLAUDE.md` §1): фонове лише приховано, без `pause`, `Read-Host`, `timeout`, дочірні процеси Node з `windowsHide: true`.
 - Потік даних: `collector/collect.mjs` читає `~/.claude/projects/**/*.jsonl`, пише `web/public/data/usage.json` (локальний, не в git) і робить upsert у Supabase; опублікований сайт читає базу під RLS.
 - Свіжість тримають три механізми: хук SessionEnd (`scripts/collect-hook.ps1`, дросель 3 год), ранковий звіт 08:00 (`scripts/run-report.ps1`), вартовий `.github/workflows/freshness.yml` о 06:00 UTC.
@@ -61,7 +61,7 @@ model: opus
 - Адаптив: `document.documentElement.scrollWidth <= innerWidth` на 375, 768, 1280 і на кожній вкладці (`CONTRACT.md` v1.4).
 - Хук: матриця з `.claude/hooks/README.md`, якщо чіпали `.claude/hooks/`.
 - Commit, merge і push лише головна сесія й лише за згодою користувача. Файли додаються поіменно.
-- Моя рекомендація, не з документів: `node --check` на змінених `.mjs` як дешева синтаксична перевірка.
+- `node --check <файл>` на кожному зміненому `.mjs`: дешева синтаксична перевірка замість лінтера, якого в проєкті немає.
 
 ## Межі
 
