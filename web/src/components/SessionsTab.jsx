@@ -12,7 +12,9 @@ import {
 import {
   fmtUsd, fmtTokens, fmtPct, fmtDateTime, fmtInt, fmtDuration, shortModel,
 } from '../lib/format.js';
+import { digestKit } from '../lib/kit.js';
 import { Card, FlagChip, CopyButton, EmptyState, FLAG_META_ALL } from './ui.jsx';
+import KitChips from './KitChips.jsx';
 import { useMediaQuery, PHONE_MEDIA } from './charts.jsx';
 
 function ModelMix({ models }) {
@@ -101,7 +103,24 @@ function WhatHappened({ session }) {
   );
 }
 
-function Drawer({ item, onClose }) {
+/**
+ * Блок «Скіли й агенти» (CONTRACT v1.12): власні виклики сесії і виклики її
+ * агентів. Полів немає (колектор до v1.12): блока немає; поля порожні:
+ * тьмяний рядок «скілів і агентів не викликала».
+ */
+function KitBlock({ session }) {
+  const rec = digestKit(session.digest);
+  if (!rec) return null;
+  return (
+    <>
+      <h4 className="drawer-section">Скіли й агенти</h4>
+      <KitChips rec={rec} />
+    </>
+  );
+}
+
+/** Дровер сесії. Експортується: вкладка «Скіли й агенти» відкриває той самий. */
+export function Drawer({ item, onClose }) {
   useEffect(() => {
     const onKey = (e) => { if (e.key === 'Escape') onClose(); };
     window.addEventListener('keydown', onKey);
@@ -143,6 +162,7 @@ function Drawer({ item, onClose }) {
         </div>
 
         <WhatHappened session={s} />
+        <KitBlock session={s} />
 
         <h4 className="drawer-section">Мікс моделей</h4>
         <ModelMix models={s.models} />

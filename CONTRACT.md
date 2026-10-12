@@ -368,6 +368,109 @@ Motivation (measured 2026-08-19 over transcripts since 2026-08-12): tool results
 
 **PDF/XLSX**: XLSX gains a «Вивід інструментів» sheet (day, tool, calls, chars, tokens); PDF unchanged (space is tight).
 
+## v1.12 Skills & agents per session, desktop sidebar groups (binding)
+
+Motivation (user, 2026-10-12): see every own working session the way the desktop
+app sidebar groups them, and for each session which skills and agents it used.
+The app itself shows only titles; all the data is local. A prototype over the
+real files read 22 sessions in 4 groups (25 transcripts, 3.2 GB) in 18 s.
+
+### Part A: collector (`collector/**`)
+
+1. Per-unit facts (main session and every sidechain unit), extracted while
+   streaming and kept in the per-file cache (bump `CACHE_VERSION`):
+   - `skills`: `{name: count}` from `tool_use` blocks with `name === "Skill"`,
+     key `input.skill` (skip when it is not a string).
+   - `agents`: `{type: count}` from `tool_use` blocks named `"Agent"` or
+     `"Task"`, key `input.subagent_type`, default `"general-purpose"`.
+   - `workflows`: number of `tool_use` blocks named `"Workflow"`.
+   - `commands`: `{name: count}` from slash commands the person typed:
+     `<command-name>/name</command-name>` in `type:"user"` records (content as a
+     string or as `text` blocks), leading `/` stripped, main units only.
+     Built-ins (`model`, `compact`) stay in; the UI does not try to split them.
+   - Dedup by the `tool_use` block id, the key the digests already use.
+2. `sessions[].digest` gains `skills`, `agents`, `workflows`, `commands`; main
+   sessions also get `skillsInAgents` and `agentsInAgents`: the sums of
+   `skills` / `agents` over that session's sidechain units (units keyed
+   `${sid}:${agentId}`, workflow agents included).
+3. Desktop app metadata, new module `collector/desktop.mjs` (zero deps), read on
+   every run and never cached:
+   - Groups: `%APPDATA%\Claude\claude_desktop_config.json`, ONLY the key
+     `preferences.epitaxyPrefs["dframe-group-scopes"]`. Per scope key
+     (`<org>/<account>`): `groups[]` `{id, name}` in sidebar order,
+     `assignments` `{"code:local_<id>": groupId}`, `order`
+     `{groupId: ["code:local_<id>", ...]}` = sidebar order inside a group.
+     The file holds unrelated settings that may include secrets: nothing
+     outside that key is logged, copied or serialized.
+   - Sessions: `%APPDATA%\Claude\claude-code-sessions\<org>\<account>\local_*.json`.
+     Read only `sessionId`, `cliSessionId`, `priorCliSessionIds`, `title`,
+     `cwd`, `model`, `effort`, `isArchived`, `createdAt`, `lastActivityAt`
+     (epoch ms). Every other field is ignored.
+   - Kept: every session filed under a group (archived ones too, flagged);
+     ungrouped sessions (mostly routine runs) only as per-project counts.
+   - Join: transcript ids `[cliSessionId, ...priorCliSessionIds]` to transcript
+     sessions and their sidechain units. Aggregate from the facts, not from the
+     trimmed `sessions[]` list (sessions under $0.01 are dropped there).
+   - Format guard: a missing folder or key, or an unexpected shape, adds one
+     Ukrainian line to `warnings` («Сесії застосунку не прочитано: <причина>»)
+     and emits `appSessions: null`; the run still succeeds. `--no-app` skips it.
+4. Snapshot additions (additive, `schemaVersion` unchanged, readers tolerate
+   their absence):
+
+```jsonc
+"appGroups": [{ "id": "cg-...", "name": "Group", "order": 0 }],
+"appSessions": [{
+  "appSessionId": "local_...", "title": "...",
+  "groupId": "cg-...", "group": "Group", "orderInGroup": 0,
+  "archived": false, "createdAt": "ISO", "lastActivityAt": "ISO",
+  "model": "claude-opus-5-5", "effort": "medium", "project": "proj-alpha",
+  "transcripts": ["uuid"], "transcriptsFound": 1,
+  "costUsd": 12.34,
+  "skills": {"name": 1}, "skillsInAgents": {}, "agents": {},
+  "agentsInAgents": {}, "workflows": 0, "commands": {}
+}],
+"appUngrouped": [{ "project": "proj-alpha", "sessions": 1798, "lastActivityAt": "ISO" }]
+```
+
+   `project` comes from `cwd` with the same derivation as transcript sessions;
+   `costUsd` covers the main units and the sidechain units of those transcripts.
+5. Push: `meta` rows `appGroups`, `appSessions`, `appUngrouped` (jsonb, no
+   migration). `sessions_agg.digest` carries the new digest fields as they are.
+
+### Part B: UI (`web/src/**`, XLSX, demo data)
+
+- New tab «Скіли й агенти» (id `kit`), right after «Сесії».
+- Filters: chips of `appGroups` in sidebar order, multi-select, default all,
+  kept in URL state; toggle «Архівні». The global project filter narrows by
+  `project`; the global period keeps sessions whose `lastActivityAt` falls in it.
+- Summary card: sessions shown, how many used at least one skill and at least
+  one agent, top skills (own calls) and top agents with counts, workflow total.
+  Numbers come from pure functions in `web/src/lib/kit.js`.
+- One card per group, sidebar order, sessions in `orderInGroup` order. Row:
+  title, last activity in Kyiv time («12.10, 11:45»), model · effort, cost;
+  chip rows «Скіли» (blue, `name ×N`), «В агентах» (teal), «Агенти» (purple),
+  workflows count (indigo), «Команди» (gray). Nothing used: a dim line
+  «скілів і агентів не викликала». A row opens the existing session drawer for
+  its latest transcript when that transcript is in `sessions[]`.
+- Footer «Без групи»: `appUngrouped` per project, collapsed, one line saying
+  these are mostly routine runs.
+- `appSessions` absent or null: one sentence why (the warning text when there
+  is one), never a crash or an empty card.
+- Session drawer («Сесії»): block «Скіли й агенти» from `digest`, hidden when
+  the fields are absent.
+- Supabase mode reads `meta.appGroups`, `meta.appSessions`, `meta.appUngrouped`;
+  local mode reads them from the snapshot.
+- XLSX: sheet «Скіли й агенти», one row per app session: Група, Сесія, Остання
+  активність, Модель, Effort, $, Скіли, В агентах, Агенти, Воркфлоу, Команди
+  (maps rendered as `name ×N`, joined by `, `).
+- `demo.json` gains synthetic `appGroups` / `appSessions` / `appUngrouped`.
+- Design per «Design: iOS light»; 375 / 768 / 1280 px, chips wrap, no
+  horizontal page scroll.
+
+Privacy: session titles and group names are real project data. They live only
+in the gitignored snapshot and in Supabase behind RLS; `demo.json` stays
+synthetic.
+
 ## Privacy (public repo!)
 
 `.gitignore` MUST cover: `web/public/data/usage.json`, `collector/.cache/`, `collector/.env`, `node_modules`, `dist`. No real usage numbers, session titles, client/project names, or `HEAVY_METAL` username in committed files — docs use `%USERPROFILE%`. demo.json = synthetic projects («proj-alpha», «proj-beta»...). README in Ukrainian.

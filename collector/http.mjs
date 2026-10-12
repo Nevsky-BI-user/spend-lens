@@ -33,15 +33,24 @@ export function httpsGetJson(url, timeoutMs = 5000) {
 
 /** POST a JSON body. Resolves { status, body }. */
 export function httpsPostJson(url, body, headers = {}, timeoutMs = 30000) {
+  return httpsSend('POST', url, body, headers, timeoutMs);
+}
+
+/** DELETE (PostgREST filters live in the URL). Resolves { status, body }. */
+export function httpsDelete(url, headers = {}, timeoutMs = 30000) {
+  return httpsSend('DELETE', url, null, headers, timeoutMs);
+}
+
+function httpsSend(method, url, body, headers, timeoutMs) {
   return new Promise((resolve, reject) => {
-    const data = Buffer.from(JSON.stringify(body), 'utf8');
+    const data = Buffer.from(body === null ? '' : JSON.stringify(body), 'utf8');
     const u = new URL(url);
     const req = https.request(
       {
         hostname: u.hostname,
         port: u.port || 443,
         path: u.pathname + u.search,
-        method: 'POST',
+        method,
         timeout: timeoutMs,
         headers: {
           'content-type': 'application/json',

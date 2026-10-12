@@ -19,6 +19,7 @@ import { buildProjectCards, capitalizeFirst, projectSummary } from './digest.js'
 import { fmtDomMonth, shortModel } from './format.js';
 import { rtkWindow } from './rtkValue.js';
 import { charsToTokens } from './toolFlow.js';
+import { kitSheetRows } from './kit.js';
 
 // ------------------------------------------------------------ формати ------
 
@@ -353,6 +354,19 @@ export function buildSheetData(snapshot, meta = {}) {
     }))
     .sort((a, b) => (a.day < b.day ? -1 : a.day > b.day ? 1 : b.chars - a.chars));
 
+  // --- скіли й агенти (v1.12) ---
+  // Той самий фільтр, що й на вкладці: групи й архівні з URL, проєкт, період
+  // або день за lastActivityAt. null: даних застосунку у знімку немає.
+  const kitOpts = meta.kit || {};
+  const kit = kitSheetRows(snap, {
+    groups: kitOpts.groups || null,
+    archived: !!kitOpts.archived,
+    project,
+    period,
+    day,
+    anchorDay: meta.anchorDay || lastDay(days),
+  });
+
   return {
     kpi,
     daily,
@@ -361,6 +375,7 @@ export function buildSheetData(snapshot, meta = {}) {
     sessions: sessionRows,
     recommendations,
     toolOutput,
+    kit,
     meta: { project, period, day, timeZone, totalUsd, from, to, budgetUsd, forecastTotal },
   };
 }
@@ -557,6 +572,24 @@ export async function buildWorkbook(snapshotSlice, meta = {}) {
       { header: 'Символів', key: 'chars', width: 16, numFmt: INT },
       { header: 'Токени, приблизно', key: 'tokens', width: 20, numFmt: INT },
     ], data.toolOutput);
+  }
+
+  // ---------------- Скіли й агенти (v1.12) ---------------------------------
+  // Аркуш є, лише коли у знімку є сесії застосунку (старий знімок: без нього).
+  if (data.kit) {
+    addTableSheet(wb, 'Скіли й агенти', [
+      { header: 'Група', key: 'group', width: 22 },
+      { header: 'Сесія', key: 'title', width: 52, wrap: true },
+      { header: 'Остання активність', key: 'lastActivity', width: 24 },
+      { header: 'Модель', key: 'model', width: 18 },
+      { header: 'Effort', key: 'effort', width: 10 },
+      { header: '$', key: 'costUsd', width: 12, numFmt: MONEY },
+      { header: 'Скіли', key: 'skills', width: 40, wrap: true },
+      { header: 'В агентах', key: 'skillsInAgents', width: 40, wrap: true },
+      { header: 'Агенти', key: 'agents', width: 40, wrap: true },
+      { header: 'Воркфлоу', key: 'workflows', width: 11, numFmt: INT },
+      { header: 'Команди', key: 'commands', width: 34, wrap: true },
+    ], data.kit);
   }
 
   // ---------------- Рекомендації -------------------------------------------

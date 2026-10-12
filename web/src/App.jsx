@@ -17,6 +17,7 @@ import OverviewTab from './components/OverviewTab.jsx';
 import CategoriesTab from './components/CategoriesTab.jsx';
 import ProjectsTab from './components/ProjectsTab.jsx';
 import SessionsTab from './components/SessionsTab.jsx';
+import KitTab from './components/KitTab.jsx';
 import FactorsTab from './components/FactorsTab.jsx';
 import ActionsTab from './components/ActionsTab.jsx';
 import LoginCard from './components/LoginCard.jsx';
@@ -28,6 +29,7 @@ const TABS = [
   { id: 'categories', label: 'Категорії', component: CategoriesTab },
   { id: 'projects', label: 'Проєкти', component: ProjectsTab },
   { id: 'sessions', label: 'Сесії', component: SessionsTab },
+  { id: 'kit', label: 'Скіли й агенти', component: KitTab },
   { id: 'factors', label: 'Фактори', component: FactorsTab },
   { id: 'actions', label: 'Дії', component: ActionsTab },
 ];
@@ -151,7 +153,7 @@ function Dashboard() {
   const [mode] = useState(resolveMode);
   const [state, setState] = useState({ status: 'loading' });
   const [ui, apply] = useUrlState();
-  const { tab, period, project, day, budget } = ui;
+  const { tab, period, project, day, budget, groups, archived } = ui;
 
   const setTab = useCallback((id) => apply({ tab: id }, true), [apply]);
   const setPeriod = useCallback((p) => apply({ period: p, day: null }), [apply]);
@@ -160,6 +162,9 @@ function Dashboard() {
   // повертає рівно туди, звідки клікнули.
   const selectDay = useCallback((d) => apply({ day: d, tab: 'sessions' }, true), [apply]);
   const clearDay = useCallback(() => apply({ day: null }, true), [apply]);
+  // v1.12: фільтр вкладки «Скіли й агенти»: дрібна правка, тож replaceState.
+  const setKitGroups = useCallback((g) => apply({ groups: g }), [apply]);
+  const setKitArchived = useCallback((v) => apply({ archived: !!v }), [apply]);
   const setBudget = useCallback((v) => {
     writeStoredBudget(v);
     apply({ budget: v });
@@ -343,13 +348,16 @@ function Dashboard() {
         // їх ще раз на вузькому зрізі означало б віддати файл, де чіпа немає,
         // хоча на екрані він є (медіани ставок на зрізі інші).
         sessionReturns: returns ? returns.byId : null,
+        // v1.12: аркуш «Скіли й агенти» бере той самий фільтр груп і архівних,
+        // що й вкладка.
+        kit: { groups, archived },
       });
     } catch (e) {
       setExportError(e.message || 'не вдалося зібрати файл');
     } finally {
       setExportBusy(false);
     }
-  }, [filtered, project, period, day, anchorDay, budget, monthCmp, returns]);
+  }, [filtered, project, period, day, anchorDay, budget, monthCmp, returns, groups, archived]);
 
   // --- стани без даних ---
   if (state.status === 'loading') {
@@ -472,7 +480,8 @@ function Dashboard() {
             «Слабка віддача»; «Проєкти» — shareTotalUsd як базу часток;
             «Категорії» — allDays для картки RTK (її статистика глобальна, тож
             фільтр за проєктом до неї не застосовується). Решта вкладок зайві
-            пропси ігнорує. */}
+            пропси ігнорує. «Скіли й агенти» беруть projectSnapshot (сесії
+            без обрізання за періодом, щоб відкрити дровер) і свій фільтр груп. */}
         <ActiveTab
           snapshot={filtered}
           kpiDays={projectOnly ? projectOnly.days : []}
@@ -487,6 +496,11 @@ function Dashboard() {
           onBudgetChange={setBudget}
           onSelectProject={setProject}
           onSelectDay={selectDay}
+          projectSnapshot={projectOnly}
+          kitGroups={groups}
+          kitArchived={archived}
+          onKitGroupsChange={setKitGroups}
+          onKitArchivedChange={setKitArchived}
         />
       </main>
 

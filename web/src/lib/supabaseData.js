@@ -139,6 +139,22 @@ async function fetchAll(supabase, table, orderCols) {
 }
 
 /**
+ * Ключі meta для вкладки «Скіли й агенти» (CONTRACT v1.12). Масив береться
+ * як є, null зберігається як null, усе інше (рядка немає, дивна форма)
+ * пропускається, щоб знімок виглядав як від старого колектора.
+ */
+function appMeta(meta) {
+  const out = {};
+  for (const key of ['appGroups', 'appSessions', 'appUngrouped']) {
+    if (!(key in meta)) continue;
+    const v = meta[key];
+    if (Array.isArray(v)) out[key] = v;
+    else if (v === null) out[key] = null;
+  }
+  return out;
+}
+
+/**
  * Читає usage_days / sessions_agg / meta і збирає снапшот.
  * Кидає Error('ACCESS_DENIED'), якщо користувача немає в allowlist.
  * RLS не повертає помилку для SELECT — просто фільтрує рядки, тому доступ
@@ -204,5 +220,10 @@ export async function fetchSnapshot() {
     // v1.10: вивід інструментів по днях. Немає рядка (стара БД / старий колектор)
     // → null, і картка «Звідки течуть токени інструментів» не рендериться.
     toolOutput: Array.isArray(meta.toolOutput) ? meta.toolOutput : null,
+    // v1.12: групи й сесії застосунку десктопа, три jsonb-рядки meta.
+    // Рядка немає (старий колектор): ключ лишається undefined; колектор
+    // записав null (не прочитав застосунок): null, причина в warnings.
+    // Вкладка «Скіли й агенти» розрізняє ці випадки в поясненні.
+    ...appMeta(meta),
   };
 }

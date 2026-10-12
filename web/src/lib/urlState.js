@@ -10,7 +10,7 @@
 //  - `#hash` лишається робочим псевдонімом вкладки (старі посилання).
 
 /** Ключі, якими володіє цей модуль; решта параметрів URL недоторкані. */
-const MANAGED = ['tab', 'period', 'project', 'day', 'budget'];
+const MANAGED = ['tab', 'period', 'project', 'day', 'budget', 'groups', 'archived'];
 
 const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -44,6 +44,17 @@ export function parseBudget(raw) {
   return Number.isFinite(v) && v > 0 ? v : null;
 }
 
+/**
+ * Вибір груп вкладки «Скіли й агенти» (v1.12): 'a,b' → ['a','b'], порожньо → null
+ * (усі групи). Чи існують такі групи, перевіряє вкладка: даних ще немає під
+ * час розбору адреси.
+ */
+export function parseGroups(raw) {
+  if (raw == null) return null;
+  const ids = [...new Set(String(raw).split(',').map((x) => x.trim()).filter(Boolean))];
+  return ids.length ? ids : null;
+}
+
 /** Валідний день 'YYYY-MM-DD' або null. */
 export function parseDay(raw) {
   return DAY_RE.test(raw || '') ? raw : null;
@@ -53,7 +64,8 @@ export function parseDay(raw) {
  * Розбір стану з location. Період у URL людяний: `period=7|30|all`.
  * @param {{search?:string, hash?:string, tabIds:string[], periodValues:number[],
  *          defaultTab?:string, defaultPeriod?:number}} opts
- * @returns {{tab:string, period:number, project:string|null, day:string|null, budget:number|null}}
+ * @returns {{tab:string, period:number, project:string|null, day:string|null, budget:number|null,
+ *            groups:string[]|null, archived:boolean}}
  */
 export function parseUrlState({
   search = '',
@@ -84,7 +96,11 @@ export function parseUrlState({
   const rawBudget = p.get('budget');
   const budget = rawBudget != null ? parseBudget(rawBudget) : readStoredBudget();
 
-  return { tab, period, project, day, budget };
+  // v1.12: фільтр вкладки «Скіли й агенти». Типово: усі групи, без архівних.
+  const groups = parseGroups(p.get('groups'));
+  const archived = p.get('archived') === '1';
+
+  return { tab, period, project, day, budget, groups, archived };
 }
 
 /**
@@ -100,6 +116,8 @@ export function buildUrl(state, { defaultTab = 'overview', defaultPeriod = 30, l
   if (state.project) p.set('project', state.project);
   if (state.day) p.set('day', state.day);
   if (state.budget != null) p.set('budget', String(state.budget));
+  if (Array.isArray(state.groups) && state.groups.length) p.set('groups', state.groups.join(','));
+  if (state.archived) p.set('archived', '1');
 
   const qs = p.toString();
   return `${location.pathname}${qs ? `?${qs}` : ''}`;
