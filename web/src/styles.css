@@ -1632,3 +1632,132 @@ button { font-family: inherit; }
 @media screen and (prefers-reduced-motion: reduce) {
   .refresh-btn.busy .refresh-icon { animation: none; }
 }
+
+/* ===================================== v1.12: вкладка «Скіли й агенти» --- */
+
+/* Фільтр груп: пігулки в стилі iOS, вибрана заливається синім. */
+.kit-filters {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.kit-group-chips { display: flex; flex-wrap: wrap; gap: 8px; min-width: 0; }
+.kit-filter-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: none;
+  border-radius: 999px;
+  padding: 7px 14px;
+  background: rgba(118, 118, 128, .12);
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  text-align: left;
+}
+.kit-filter-chip.active { background: var(--blue); color: #fff; font-weight: 600; }
+.kit-filter-chip em { font-style: normal; font-weight: 700; color: var(--text-2); }
+.kit-filter-chip:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+
+/* Підсумок: чотири числа + два списки чіпів. */
+.kit-kpis {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+.kit-kpis > div { display: flex; flex-direction: column; min-width: 0; }
+.kit-kpis strong { font-size: 24px; font-weight: 700; letter-spacing: -0.3px; }
+.kit-kpi-note { font-size: 12px; color: var(--text-2); }
+.kit-tops {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px 20px;
+  margin-top: 6px;
+}
+
+.kit-groups { display: flex; flex-direction: column; gap: 16px; }
+
+/* Рядки сесій усередині групи. */
+.kit-rows { list-style: none; margin: 0; padding: 0; }
+.kit-row { border-top: 1px solid var(--line); padding: 12px 0; }
+.kit-row:first-child { border-top: none; padding-top: 4px; }
+.kit-row-link { padding: 0; }
+.kit-row-link:first-child { padding-top: 0; }
+.kit-row-btn {
+  padding: 12px 8px;
+  margin: 0 -8px;
+  border-radius: 10px;
+  cursor: pointer;
+}
+.kit-row-btn:hover { background: #F7F7FA; }
+.kit-row-btn:focus-visible { outline: 2px solid var(--blue); outline-offset: -2px; }
+.kit-row-top {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+.kit-row-title { font-weight: 600; min-width: 0; overflow-wrap: anywhere; }
+.kit-row-cost { font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.kit-row-meta { margin-top: 2px; font-size: 12px; color: var(--text-2); overflow-wrap: anywhere; }
+
+/* Рядки чіпів: підпис ліворуч, чіпи переносяться. */
+.kit-lines { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+.kit-line { display: flex; align-items: flex-start; gap: 10px; }
+.kit-line-label {
+  flex: 0 0 120px;
+  font-size: 12px;
+  color: var(--text-2);
+  padding-top: 3px;
+}
+.kit-line .chip-row { min-width: 0; flex: 1 1 auto; }
+.kit-chip { white-space: normal; overflow-wrap: anywhere; }
+.kit-none { margin: 0; font-size: 13px; color: #AEAEB2; }
+
+.chip-skill       { background: rgba(0, 122, 255, .12);  color: #0a5bb5; }
+.chip-skill-agent { background: rgba(50, 173, 230, .12); color: #1a6f99; }
+.chip-agent       { background: rgba(175, 82, 222, .12); color: #7d2fa8; }
+.chip-workflow    { background: rgba(88, 86, 214, .12);  color: #3d3ba0; }
+.chip-command     { background: rgba(142, 142, 147, .12); color: #59595e; }
+
+/* «Без групи»: згорнутий список. */
+.kit-ungrouped summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 44px;
+  cursor: pointer;
+  list-style: none;
+}
+.kit-ungrouped summary::-webkit-details-marker { display: none; }
+.kit-ungrouped summary::after {
+  content: '';
+  width: 7px;
+  height: 7px;
+  border-right: 1.8px solid var(--text-2);
+  border-bottom: 1.8px solid var(--text-2);
+  transform: rotate(45deg);
+  margin-left: 4px;
+  flex-shrink: 0;
+}
+.kit-ungrouped details[open] summary::after { transform: rotate(-135deg); }
+.kit-ungrouped-title { font-size: 16px; font-weight: 600; }
+.kit-ungrouped-count { margin-left: auto; color: var(--text-2); font-size: 13px; }
+.kit-ungrouped summary:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; border-radius: 8px; }
+
+@media screen and (max-width: 768px) {
+  .kit-filter-chip { min-height: 44px; }
+  .kit-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .kit-tops { grid-template-columns: 1fr; }
+}
+
+@media screen and (max-width: 640px) {
+  .kit-line { flex-direction: column; gap: 4px; }
+  .kit-line-label { flex: 0 0 auto; padding-top: 0; }
+}

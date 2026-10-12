@@ -2,7 +2,7 @@
 /**
  * spend-lens collector — parses Claude Code JSONL transcripts into a usage snapshot.
  *
- * Usage: node collector/collect.mjs [--source <dir>] [--out <file>] [--no-push] [--verbose]
+ * Usage: node collector/collect.mjs [--source <dir>] [--out <file>] [--no-push] [--no-rtk] [--no-app] [--verbose]
  *
  * Zero npm dependencies (node:fs / node:readline / node:https only). Node >= 20.
  * - Full rescan with per-file cache (collector/.cache/files.json keyed by path+size+mtime)
@@ -26,6 +26,9 @@
  *   `tool_use`: 61,5 тис. сирих блоків → 59,2 тис. після дедупу (915 повторів
  *   усередині файлу + 1407 між файлами). Ключ дедупу — власний `tool_use_id`
  *   блока, глобально, як і для digest-фактів; за message.id дедупити НЕ можна.
+ * - v1.12: `digest.skills/agents/workflows/commands` (+ `skillsInAgents/agentsInAgents`
+ *   основним сесіям) і `appGroups/appSessions/appUngrouped` з метаданих десктопного
+ *   застосунку (desktop.mjs, читається щоразу, не кешується; `--no-app` пропускає).
  * - After writing the snapshot: push aggregates to Supabase (skipped silently when
  *   collector/.env is absent, or when --no-push).
  */
@@ -38,6 +41,7 @@ import { fileURLToPath } from 'node:url';
 import { httpsGetJson } from './http.mjs';
 import { pushToSupabase } from './push.mjs';
 import { collectRtk } from './rtk.mjs';
+import { readDesktopApp } from './desktop.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const CACHE_DIR = path.join(__dirname, '.cache');
@@ -47,7 +51,7 @@ const PRICING_FALLBACK = path.join(__dirname, 'pricing.json');
 const PROJECT_NOTES = path.join(__dirname, 'projects.json'); // optional, gitignored
 const LITELLM_URL =
   'https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json';
-const CACHE_VERSION = 9; // v1.10: у кеші зʼявились розміри tool_result
+const CACHE_VERSION = 10; // v1.12: у кеші зʼявились скіли, агенти й слеш-команди
 const SCHEMA_VERSION = 2;
 const TZ = 'Europe/Kyiv';
 const PARSE_CONCURRENCY = 8;
@@ -64,6 +68,8 @@ function parseArgs(argv) {
     push: true,
     verbose: false,
     rtk: true,
+    // v1.12: метадані десктопного застосунку (групи бокової панелі, сесії)
+    app: true,
     // v1.9: шлях до бінара rtk. Потрібен для перевірки деградації — вказавши
     // неіснуючий файл, можна переконатися, що збір далі працює (snapshot.rtk = null).
     rtkBin: null,
@@ -74,10 +80,11 @@ function parseArgs(argv) {
     else if (a === '--out') args.out = path.resolve(argv[++i]);
     else if (a === '--no-push') args.push = false;
     else if (a === '--no-rtk') args.rtk = false;
+    else if (a === '--no-app') args.app = false;
     else if (a === '--rtk-bin') args.rtkBin = argv[++i];
     else if (a === '--verbose') args.verbose = true;
     else if (a === '--help' || a === '-h') {
-      console.log('Usage: node collector/collect.mjs [--source <dir>] [--out <file>] [--no-push] [--no-rtk] [--rtk-bin <path>] [--verbose]');
+      console.log('Usage: node collector/collect.mjs [--source <dir>] [--out <file>] [--no-push] [--no-rtk] [--rtk-bin <path>] [--no-app] [--verbose]');
       process.exit(0);
     } else {
       console.error(`Unknown argument: ${a}`);
@@ -386,6 +393,44 @@ function unpackToolFact(fact) {
   return [fact.slice(0, i1), fact.slice(i1 + 1, i2), fact.slice(i2 + 1)];
 }
 
+/**
+ * v1.12. Компактний факт «скіл / агент / воркфлоу» для одного `tool_use` блока:
+ * `S<скіл>`, `A<тип агента>`, `W`; null для решти інструментів. Назву беремо
+ * сиру (`b.name`), без normTool. Скіл без рядкового `input.skill` пропускаємо.
+ */
+function kitFact(b) {
+  const inp = b.input && typeof b.input === 'object' ? b.input : null;
+  if (b.name === 'Skill') {
+    return inp && typeof inp.skill === 'string' && inp.skill ? 'S' + inp.skill : null;
+  }
+  if (b.name === 'Agent' || b.name === 'Task') {
+    const t = inp && typeof inp.subagent_type === 'string' && inp.subagent_type.trim();
+    return 'A' + (t || 'general-purpose');
+  }
+  if (b.name === 'Workflow') return 'W';
+  return null;
+}
+
+const COMMAND_RE = /<command-name>\s*\/?([^<]*?)\s*<\/command-name>/g;
+
+/** v1.12. Назви слеш-команд із тексту запису користувача, без початкового `/`. */
+function commandNames(text) {
+  const out = [];
+  for (const m of text.matchAll(COMMAND_RE)) if (m[1]) out.push(m[1]);
+  return out;
+}
+
+/** Map(name -> count) у звичайний обʼєкт, найчастіші першими. */
+function countsObject(map) {
+  const o = {};
+  for (const [k, v] of [...map.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))) o[k] = v;
+  return o;
+}
+
+function addCounts(into, from) {
+  for (const [k, v] of from) into.set(k, (into.get(k) || 0) + v);
+}
+
 /** FNV-1a → base36. Only used to count DISTINCT files, never to reconstruct a path. */
 function hashKey(s) {
   let h = 0x811c9dc5;
@@ -507,7 +552,9 @@ function deriveProject(cwd, dirName) {
  *     [key]: { id, sidechain, cwds:{}, dirName, customTitle, lastSummary,
  *              firstUserText, firstIntent, userTurns, firstTs, lastTs,
  *              msgs:  { [dedupKey]:  [model, tsMs, in, out, read, w5m, w1h] },
- *              tools: { [toolBlockKey]: "name|area|fileKey" } }
+ *              tools: { [toolBlockKey]: "name|area|fileKey" },
+ *              kit?:  { [toolBlockKey]: "S<skill>" | "A<agentType>" | "W" },   // v1.12
+ *              cmds?: { [userRecordUuid]: ["model", ...] } }                  // v1.12
  *   }
  * }
  * `msgs` and `tools` are deduped on DIFFERENT keys on purpose. One API response is
@@ -606,10 +653,20 @@ function parseFile(file, dirName) {
         // v1.10: назви інструментів збираємо ДО перевірки usage — `tool_result`
         // мусить знайти свою назву навіть якщо запис виклику лишився без usage.
         if (Array.isArray(msg.content)) {
-          for (const b of msg.content) {
+          let kitUnit = null;
+          const kitMsgKey = msg.id || o.requestId || o.uuid || '';
+          for (let bi = 0; bi < msg.content.length; bi++) {
+            const b = msg.content[bi];
             if (!b || b.type !== 'tool_use') continue;
             const tid = stripToolId(b.id);
             if (tid) toolNames.set(tid, normTool(b.name));
+            // v1.12: скіли, агенти й воркфлоу. Теж ДО перевірки usage: виклик
+            // рахується, навіть якщо його запис лишився без usage.
+            const kit = kitFact(b);
+            if (kit) {
+              if (!kitUnit) kitUnit = unitFor(o.sessionId || fileDefaultSid || base, o.agentId, o.isSidechain);
+              (kitUnit.kit || (kitUnit.kit = {}))[toolBlockKey(b, kitMsgKey, bi)] = kit;
+            }
           }
         }
         if (!msg.usage) return; // skip records without usage
@@ -701,6 +758,14 @@ function parseFile(file, dirName) {
           if (c.some((x) => x && x.type === 'tool_result')) return;
           text = c.filter((x) => x && x.type === 'text').map((x) => x.text).join(' ');
         } else return;
+        // v1.12: слеш-команди, які людина набрала сама; лише основні одиниці
+        if (!o.agentId && !o.isSidechain && text.includes('<command-name>')) {
+          const names = commandNames(text);
+          if (names.length) {
+            const ck = o.uuid || 'x' + hashKey(`${o.timestamp || ''}|${text.slice(0, 300)}`);
+            (unit.cmds || (unit.cmds = {}))[ck] = names;
+          }
+        }
         if (!text.trim()) return;
         unit.userTurns++;
         if (!unit.firstUserText) {
@@ -836,6 +901,93 @@ const topEntries = (map, n) =>
 
 // ---------------------------------------------------------------- main
 
+// ---------------------------------------------------------------- desktop app (v1.12)
+
+const isoOrNull = (msVal) => (msVal ? new Date(msVal).toISOString() : null);
+
+/**
+ * Зʼєднує сесії застосунку (desktop.mjs) з фактами одиниць транскриптів.
+ * Транскрипти сесії: [cliSessionId, ...priorCliSessionIds]; до кожного додаються його
+ * одиниці субагентів. Вартість і факти беруться з unitFacts, тобто з УСІХ одиниць,
+ * а не з урізаного sessions[] (сесії дешевші за $0.01 там відкинуто).
+ * Збій читання: три null і один рядок у warnings; прогін не падає.
+ */
+function buildAppSessions(desk, { unitFacts, sidechainsOf, warnings }) {
+  if (!desk || !desk.ok) {
+    warnings.add(`Сесії застосунку не прочитано: ${(desk && desk.reason) || 'невідома причина'}`);
+    return { appGroups: null, appSessions: null, appUngrouped: null, stats: null };
+  }
+  const appSessions = desk.sessions.map((s) => {
+    const skills = new Map();
+    const skillsInAgents = new Map();
+    const agents = new Map();
+    const agentsInAgents = new Map();
+    const commands = new Map();
+    let workflows = 0;
+    let cost = 0;
+    let found = 0;
+    for (const t of s.transcripts) {
+      const main = unitFacts.get(t);
+      const sides = sidechainsOf.get(t) || [];
+      if (main || sides.length) found++;
+      if (main) {
+        cost += main.costUsd;
+        addCounts(skills, main.skills);
+        addCounts(agents, main.agents);
+        addCounts(commands, main.commands);
+        workflows += main.workflows;
+      }
+      for (const k of sides) {
+        const f = unitFacts.get(k);
+        cost += f.costUsd;
+        addCounts(skillsInAgents, f.skills);
+        addCounts(agentsInAgents, f.agents);
+      }
+    }
+    return {
+      appSessionId: s.appSessionId,
+      title: cleanTitle(s.title || ''),
+      groupId: s.groupId,
+      group: s.group,
+      orderInGroup: s.orderInGroup,
+      archived: s.archived,
+      createdAt: isoOrNull(s.createdAt),
+      lastActivityAt: isoOrNull(s.lastActivityAt),
+      model: s.model,
+      effort: s.effort,
+      project: deriveProject(s.cwd, ''),
+      transcripts: s.transcripts,
+      transcriptsFound: found,
+      costUsd: round(cost, 4),
+      skills: countsObject(skills),
+      skillsInAgents: countsObject(skillsInAgents),
+      agents: countsObject(agents),
+      agentsInAgents: countsObject(agentsInAgents),
+      workflows,
+      commands: countsObject(commands),
+    };
+  });
+
+  const ung = new Map(); // project -> { sessions, last }
+  for (const u of desk.ungrouped) {
+    const project = deriveProject(u.cwd, '');
+    let row = ung.get(project);
+    if (!row) ung.set(project, (row = { sessions: 0, last: null }));
+    row.sessions++;
+    if (u.lastActivityAt && (row.last === null || u.lastActivityAt > row.last)) row.last = u.lastActivityAt;
+  }
+  const appUngrouped = [...ung.entries()]
+    .map(([project, r]) => ({ project, sessions: r.sessions, lastActivityAt: isoOrNull(r.last) }))
+    .sort((a, b) => b.sessions - a.sessions || a.project.localeCompare(b.project));
+
+  return {
+    appGroups: desk.groups.map((g) => ({ id: g.id, name: g.name, order: g.order })),
+    appSessions,
+    appUngrouped,
+    stats: desk.stats,
+  };
+}
+
 async function main() {
   const t0 = Date.now();
   const args = parseArgs(process.argv);
@@ -919,6 +1071,8 @@ async function main() {
   // v1.10: вивід інструментів. Ключ — id виклику, тому дедуп глобальний: той самий
   // результат зустрічається і двічі в одному файлі, і в двох файлах одразу.
   const globalResults = new Map(); // tool_use id -> "day|chars|tool"
+  const globalKit = new Map(); // v1.12: tool_use block id -> { owner, fact }
+  const globalCmds = new Map(); // v1.12: user record uuid -> { owner, names }
   let rawMsgs = 0;
   let malformed = 0;
   let rawResults = 0;
@@ -950,6 +1104,8 @@ async function main() {
           lastTs: null,
           msgKeys: new Set(),
           toolKeys: new Set(),
+          kitKeys: new Set(),
+          cmdKeys: new Set(),
         };
         sessions.set(key, m);
       }
@@ -976,6 +1132,20 @@ async function main() {
         globalTools.set(tk, { owner: m, fact });
         m.toolKeys.add(tk);
       }
+      // v1.12: той самий дедуп за id блока, але окремі мапи: kit-факти беруться
+      // і з записів без usage, яких у `tools` немає
+      for (const [kk, fact] of Object.entries(u.kit || {})) {
+        const prev = globalKit.get(kk);
+        if (prev) prev.owner.kitKeys.delete(kk);
+        globalKit.set(kk, { owner: m, fact });
+        m.kitKeys.add(kk);
+      }
+      for (const [ck, names] of Object.entries(u.cmds || {})) {
+        const prev = globalCmds.get(ck);
+        if (prev) prev.owner.cmdKeys.delete(ck);
+        globalCmds.set(ck, { owner: m, names });
+        m.cmdKeys.add(ck);
+      }
     }
   }
   const dedupedMsgs = globalMsgs.size;
@@ -999,6 +1169,7 @@ async function main() {
   const dayBuckets = new Map();
   const sessionRows = [];
   const modelTotals = new Map(); // model -> cost
+  const unitFacts = new Map(); // v1.12: unit key -> { costUsd, skills, agents, workflows, commands }
 
   for (const m of sessions.values()) {
     // project from most frequent cwd
@@ -1066,6 +1237,26 @@ async function main() {
       if (fileKey) fileKeys.add(fileKey);
     }
 
+    // v1.12: факти одиниці (скіли, агенти, воркфлоу, команди, сира вартість).
+    // Пишуться для КОЖНОЇ одиниці до відсіву: зʼєднання з сесіями застосунку
+    // й підсумки «в агентах» беруться звідси, а не з урізаного sessions[].
+    const uf = { costUsd: totals.costUsd, skills: new Map(), agents: new Map(), workflows: 0, commands: new Map() };
+    for (const kk of m.kitKeys) {
+      const entry = globalKit.get(kk);
+      if (!entry) continue;
+      const kind = entry.fact[0];
+      const name = entry.fact.slice(1);
+      if (kind === 'S') uf.skills.set(name, (uf.skills.get(name) || 0) + 1);
+      else if (kind === 'A') uf.agents.set(name, (uf.agents.get(name) || 0) + 1);
+      else if (kind === 'W') uf.workflows++;
+    }
+    for (const ck of m.cmdKeys) {
+      const entry = globalCmds.get(ck);
+      if (!entry) continue;
+      for (const n of entry.names) uf.commands.set(n, (uf.commands.get(n) || 0) + 1);
+    }
+    unitFacts.set(m.id, uf);
+
     if (nMsgs === 0 && m.userTurns === 0) continue;
 
     const denom = totals.input + totals.cacheRead + totals.cacheWrite5m + totals.cacheWrite1h;
@@ -1086,6 +1277,11 @@ async function main() {
       edits,
       filesTouched: fileKeys.size,
       intent,
+      // v1.12; skillsInAgents / agentsInAgents основним сесіям додаються після циклу
+      skills: countsObject(uf.skills),
+      agents: countsObject(uf.agents),
+      workflows: uf.workflows,
+      commands: countsObject(uf.commands),
     };
 
     // ---- title --------------------------------------------------------
@@ -1116,6 +1312,37 @@ async function main() {
       digest,
     });
   }
+
+  // v1.12: одиниці субагентів (ключ `${sid}:${agentId}`, воркфлоу-агенти теж)
+  // за батьківською сесією, і підсумки «в агентах» для основних сесій
+  const sidechainsOf = new Map(); // sid -> [unit key]
+  for (const key of unitFacts.keys()) {
+    const c = key.indexOf(':');
+    if (c <= 0) continue;
+    const sid = key.slice(0, c);
+    let arr = sidechainsOf.get(sid);
+    if (!arr) sidechainsOf.set(sid, (arr = []));
+    arr.push(key);
+  }
+  const inAgentsOf = (sid) => {
+    const skills = new Map();
+    const agents = new Map();
+    for (const k of sidechainsOf.get(sid) || []) {
+      const f = unitFacts.get(k);
+      addCounts(skills, f.skills);
+      addCounts(agents, f.agents);
+    }
+    return { skills, agents };
+  };
+  for (const row of sessionRows) {
+    if (row.sidechain || row.sessionId.includes(':')) continue;
+    const ia = inAgentsOf(row.sessionId);
+    row.digest.skillsInAgents = countsObject(ia.skills);
+    row.digest.agentsInAgents = countsObject(ia.agents);
+  }
+
+  // v1.12: сесії десктопного застосунку та його групи бокової панелі
+  const app = args.app ? buildAppSessions(readDesktopApp(), { unitFacts, sidechainsOf, warnings }) : null;
 
   // 6. snapshot
   const days = [...dayBuckets.values()]
@@ -1274,6 +1501,10 @@ async function main() {
     sessions: keptSessions,
     toolOutput,
     rtk,
+    // v1.12: null, коли застосунок не прочитано або --no-app
+    appGroups: app ? app.appGroups : null,
+    appSessions: app ? app.appSessions : null,
+    appUngrouped: app ? app.appUngrouped : null,
   };
 
   writeJsonAtomic(args.out, snapshot);
@@ -1303,6 +1534,15 @@ async function main() {
       ? `rtk:        ${rtk.summary.total_saved} збережених токенів, ${rtk.summary.total_commands} команд, ${rtk.daily.length} дн., ${rtk.commands.length} у таблиці команд`
       : `rtk:        немає даних (${args.rtk ? 'rtk недоступний' : '--no-rtk'})`
   );
+  log(
+    !app
+      ? 'app:        пропущено (--no-app)'
+      : app.appSessions
+        ? `app:        ${app.appGroups.length} груп, ${app.appSessions.length} сесій у групах, ` +
+          `${app.appUngrouped.reduce((a, r) => a + r.sessions, 0)} без групи; файлів ${app.stats.files}, ` +
+          `не прочитано ${app.stats.unreadable}, призначених без файла ${app.stats.assignedMissing}`
+        : 'app:        не прочитано (див. warnings)'
+  );
   if (warnings.size) log(`warnings:   ${[...warnings].join('; ')}`);
   log('--- total cost by model ---');
   for (const [model, cost] of [...modelTotals.entries()].sort((a, b) => b[1] - a[1])) {
@@ -1322,6 +1562,7 @@ async function main() {
     await pushToSupabase(snapshot, {
       envPath: path.join(__dirname, '.env'),
       verbose: args.verbose,
+      withApp: args.app,
     });
   } else {
     vlog('[push] skipped (--no-push)');
