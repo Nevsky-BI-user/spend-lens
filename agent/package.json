@@ -1,0 +1,14 @@
+{
+  "name": "spend-lens-agent",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Managed Agent для чату spend-lens: налаштування агента і локальний запуск сесії",
+  "scripts": {
+    "setup": "node --env-file=.env setup.mjs",
+    "chat": "node --env-file=.env chat.mjs"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "1.3.0"
+  }
+}
