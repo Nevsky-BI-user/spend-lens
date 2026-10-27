@@ -1,6 +1,6 @@
 # Supabase для spend-lens — покрокове налаштування
 
-Supabase зберігає агрегати витрат (`usage_days`, `sessions_agg`, `meta`) і список дозволених користувачів (`allowed_users`). Веб-застосунок читає дані через anon-ключ під захистом RLS, колектор пише через service_role-ключ з локальної машини. Уся конфігурація робиться через веб-інтерфейси — CLI Supabase не потрібен.
+Supabase зберігає агрегати витрат (`usage_days`, `sessions_agg`, `meta`) і список дозволених користувачів (`allowed_users`). Веб-застосунок читає дані через anon-ключ під захистом RLS, колектор пише через service_role-ключ з локальної машини. Уся конфігурація робиться через веб-інтерфейси — CLI Supabase не потрібен, крім розгортання функції агента (розділ 9).
 
 ## 1. Створення безкоштовного проєкту Supabase
 
@@ -144,3 +144,21 @@ delete from public.allowed_users where email = 'friend@example.com';
 ```
 
 Зміни діють одразу, передеплой не потрібен.
+
+## 9. Edge Function `agent` (Managed Agent)
+
+Функція `supabase/functions/agent` передає розмову з вкладки дашборда до Managed Agent в Anthropic. Ключ Anthropic лишається на сервері. Розгортання йде через Supabase CLI (`npx`, окремо ставити не треба).
+
+1. Привʼязати теку до проєкту дашборда: `npx supabase link --project-ref <project-ref>`. Ref має бути того самого проєкту, через який входить дашборд (поле `name` у `supabase/.temp/linked-project.json`). Функція в іншому проєкті відповідає `UNAUTHORIZED_ASYMMETRIC_JWT`: токен підписаний ключем іншого проєкту.
+2. Секрети (Edge Functions → Secrets):
+
+   | Назва | Значення |
+   |---|---|
+   | `ANTHROPIC_SPEND_LENS_API_KEY` | ключ Anthropic; задавати у вебінтерфейсі, не в командному рядку |
+   | `SPEND_LENS_AGENT_ID` | `agent_id` з `agent/agent.json` |
+   | `SPEND_LENS_AGENT_VERSION` | `agent_version` з `agent/agent.json`; оновлювати після кожної нової версії агента |
+   | `SPEND_LENS_ENVIRONMENT_ID` | `environment_id` з `agent/agent.json` |
+
+3. Розгортання: `npx supabase functions deploy agent --project-ref <project-ref>`.
+
+Відповіді функції: потік подій `data: {...}` до паузи сесії; 401 без входу; 403 пошти немає в `allowed_users` або сесія чужа; 400 недозволені події; 413 тіло понад 200 КБ; 503 бракує секрету; 502 помилка Anthropic.
