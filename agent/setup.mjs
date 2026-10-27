@@ -1,87 +1,38 @@
-// Одноразове налаштування Managed Agent: середовище + агент.
-// Перший запуск створює обидва й пише ID в agent.json (комітиться).
-// Повторний запуск НЕ створює нових: оновлює наявного агента (нова версія)
-// з поточних system-prompt.md і TOOL_DEFS. Середовище лишається те саме.
-//
-//   npm run setup
+// Синхронізує definition.mjs з API. Перший запуск створює, наступні оновлюють.
+// Запуск: node --env-file=.env setup.mjs
+import Anthropic from "@anthropic-ai/sdk";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { AGENT, ENVIRONMENT } from "./definition.mjs";
 
-import fs from 'node:fs';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
-import Anthropic from '@anthropic-ai/sdk';
-import { TOOL_DEFS } from '../web/src/lib/chatTools.js';
+const LOCK = new URL("./agent.json", import.meta.url);
+const lock = existsSync(LOCK) ? JSON.parse(readFileSync(LOCK, "utf8")) : {};
+const save = () => writeFileSync(LOCK, JSON.stringify(lock, null, 2) + "\n");
 
-const HERE = path.dirname(fileURLToPath(import.meta.url));
-const STATE_FILE = path.join(HERE, 'agent.json');
+const client = new Anthropic(); // ключ бере з ANTHROPIC_API_KEY
 
-const AGENT = {
-  name: 'spend-lens-analyst',
-  description: 'Чат дашборда spend-lens: витрати Claude Code і поради з оптимізації',
-  model: { id: 'claude-opus-5-5', effort: 'high' },
-  system: fs.readFileSync(path.join(HERE, 'system-prompt.md'), 'utf8').trim(),
-  // Вбудований набір (bash, read, web_search…) свідомо не підключено: усі числа
-  // приходять з analytics.js через власні інструменти, контейнеру нічого робити.
-  tools: TOOL_DEFS,
-};
-
-// Контейнер без вбудованих інструментів мережі не потребує: закриваємо все.
-const ENVIRONMENT = {
-  name: 'spend-lens-chat',
-  description: 'Пісочниця агента spend-lens-analyst, мережу закрито',
-  config: {
-    type: 'cloud',
-    networking: { type: 'limited', allowed_hosts: [], allow_mcp_servers: false, allow_package_managers: false },
-  },
-};
-
-if (!process.env.ANTHROPIC_API_KEY) {
-  console.error('Немає ANTHROPIC_API_KEY. Скопіюй .env.example у .env і впиши ключ.');
-  process.exit(1);
+if (lock.environment_id) {
+  console.log(`environment уже є: ${lock.environment_id}`);
+} else {
+  const env = await client.beta.environments.create(ENVIRONMENT);
+  lock.environment_id = env.id;
+  save(); // одразу: якщо агент далі впаде, другого environment не буде
+  console.log(`environment створено: ${env.id}`);
 }
 
-const client = new Anthropic();
-const state = fs.existsSync(STATE_FILE) ? JSON.parse(fs.readFileSync(STATE_FILE, 'utf8')) : {};
-
-function save() {
-  fs.writeFileSync(STATE_FILE, JSON.stringify(state, null, 2) + '\n');
+if (lock.agent_id) {
+  const before = lock.agent_version;
+  // version дає оптимістичне блокування: якщо агента змінили деінде, прийде 409.
+  const agent = await client.beta.agents.update(lock.agent_id, { version: before, ...AGENT });
+  lock.agent_version = agent.version;
+  console.log(
+    agent.version === before
+      ? `агент без змін: ${agent.id}, версія ${agent.version}`
+      : `агента оновлено: ${agent.id}, версія ${before} -> ${agent.version}`,
+  );
+} else {
+  const agent = await client.beta.agents.create(AGENT);
+  lock.agent_id = agent.id;
+  lock.agent_version = agent.version;
+  console.log(`агента створено: ${agent.id}, версія ${agent.version}`);
 }
-
-try {
-  if (!state.environment_id) {
-    const env = await client.beta.environments.create(ENVIRONMENT);
-    state.environment_id = env.id;
-    save(); // зберігаємо одразу: якщо агент упаде, друге середовище не створиться
-    console.log(`Середовище створено: ${env.id}`);
-  } else {
-    console.log(`Середовище вже є: ${state.environment_id}`);
-  }
-
-  if (!state.agent_id) {
-    const agent = await client.beta.agents.create(AGENT);
-    Object.assign(state, { agent_id: agent.id, agent_version: agent.version });
-    save();
-    console.log(`Агента створено: ${agent.id}, версія ${agent.version}`);
-  } else {
-    // version = оптимістичне блокування: якщо агента змінили деінде, оновлення
-    // відмовить, і чужі правки не перезапишуться мовчки.
-    const agent = await client.beta.agents.update(state.agent_id, { ...AGENT, version: state.agent_version });
-    const changed = agent.version !== state.agent_version;
-    state.agent_version = agent.version;
-    save();
-    console.log(changed
-      ? `Агента оновлено: ${agent.id}, нова версія ${agent.version}`
-      : `Агент ${agent.id} без змін, версія ${agent.version}`);
-  }
-  console.log(`Інструментів: ${TOOL_DEFS.length} (${TOOL_DEFS.map((t) => t.name).join(', ')})`);
-  console.log(`ID записано в ${path.relative(process.cwd(), STATE_FILE) || 'agent.json'}`);
-} catch (e) {
-  if (e instanceof Anthropic.APIError) {
-    console.error(`API ${e.status}: ${e.message}`);
-    if (e.status === 409 || /version/i.test(e.message)) {
-      console.error('Схоже, агента змінили поза setup.mjs. Звір конфіг і онови agent_version в agent.json вручну.');
-    }
-  } else {
-    console.error(e);
-  }
-  process.exit(1);
-}
+save();
