@@ -147,7 +147,7 @@ delete from public.allowed_users where email = 'friend@example.com';
 
 ## 9. Edge Function `agent` (Managed Agent)
 
-Функція `supabase/functions/agent` передає розмову з вкладки дашборда до Managed Agent в Anthropic. Ключ Anthropic лишається на сервері. Розгортання йде через Supabase CLI (`npx`, окремо ставити не треба).
+Функція `supabase/functions/agent` передає розмову з панелі «Аналітик» дашборда до Managed Agent в Anthropic. Ключ Anthropic лишається на сервері. Розгортання йде через Supabase CLI (`npx`, окремо ставити не треба).
 
 1. Привʼязати теку до проєкту дашборда: `npx supabase link --project-ref <project-ref>`. Ref має бути того самого проєкту, через який входить дашборд (поле `name` у `supabase/.temp/linked-project.json`). Функція в іншому проєкті відповідає `UNAUTHORIZED_ASYMMETRIC_JWT`: токен підписаний ключем іншого проєкту.
 2. Секрети (Edge Functions → Secrets):
@@ -158,7 +158,11 @@ delete from public.allowed_users where email = 'friend@example.com';
    | `SPEND_LENS_AGENT_ID` | `agent_id` з `agent/agent.json` |
    | `SPEND_LENS_AGENT_VERSION` | `agent_version` з `agent/agent.json`; оновлювати після кожної нової версії агента |
    | `SPEND_LENS_ENVIRONMENT_ID` | `environment_id` з `agent/agent.json` |
+   | `SPEND_LENS_DAILY_BUDGET_CENTS` | денний ліміт аналітика в центах на всіх користувачів разом; без секрету 100, тобто $1 |
 
-3. Розгортання: `npx supabase functions deploy agent --project-ref <project-ref>`.
+3. Облік витрат: виконайте `migrations/005_agent_spend.sql` у SQL Editor. Без неї функція відповідає 503 «облік витрат недоступний».
+4. Розгортання: `npx supabase functions deploy agent --project-ref <project-ref>`.
 
-Відповіді функції: потік подій `data: {...}` до паузи сесії; 401 без входу; 403 пошти немає в `allowed_users` або сесія чужа; 400 недозволені події; 413 тіло понад 200 КБ; 503 бракує секрету; 502 помилка Anthropic.
+Денний ліміт. Перед кожним запитом функція бере витрати за київський день (`agent_spent_today`) і відповідає 429, якщо ліміт вичерпано. Нова сесія отримує в Anthropic стелю `budget`, що дорівнює залишку дня, тож одна розмова ліміт не перевищить навіть посеред відповіді. Після кожного відрізка функція записує кумулятивний `list_cost` сесії (`agent_record_usage` додає до дня лише приріст) і шле браузеру `relay.budget`.
+
+Відповіді функції: потік подій `data: {...}` до паузи сесії; 401 без входу; 403 пошти немає в `allowed_users` або сесія чужа; 400 недозволені події; 413 тіло понад 200 КБ; 429 денний ліміт вичерпано; 503 бракує секрету або обліку; 502 помилка Anthropic.

@@ -12,6 +12,7 @@ const ORIGINS = ["https://nevsky-bi-user.github.io", "http://localhost:5173"];
 const INBOUND = new Set(["user.message", "user.custom_tool_result"]);
 const MAX_BODY = 200_000; // символів: питання плюс результати інструментів
 const SEGMENT_MS = 120_000; // запас до ліміту часу виконання функції
+const DEFAULT_DAILY_CENTS = 100; // денний ліміт аналітика, якщо не задано секрет
 
 function cors(req: Request) {
   const origin = req.headers.get("Origin") ?? "";
@@ -72,7 +73,20 @@ Deno.serve(async (req) => {
       return json(req, 400, { error: "дозволені лише user.message і user.custom_tool_result" });
     }
 
-    // 4. Сесія: нова або своя. Агента й версію задають секрети, а не браузер.
+    // 4. Денний ліміт (міграція 005). Рахується на всіх користувачів разом:
+    // платить один рахунок Anthropic. День київський, суми в центах list_cost.
+    const limitCents = Number(Deno.env.get("SPEND_LENS_DAILY_BUDGET_CENTS")) || DEFAULT_DAILY_CENTS;
+    const { data: spentToday, error: spentErr } = await admin.rpc("agent_spent_today");
+    if (spentErr) return json(req, 503, { error: "облік витрат недоступний" });
+    const spentCents = Number(spentToday) || 0;
+    if (spentCents >= limitCents) {
+      return json(req, 429, {
+        error: `Денний бюджет аналітика ($${(limitCents / 100).toFixed(2).replace(".", ",")}) вичерпано. Він оновиться опівночі за Києвом.`,
+        budget: { spent_cents: spentCents, limit_cents: limitCents },
+      });
+    }
+
+    // 5. Сесія: нова або своя. Агента й версію задають секрети, а не браузер.
     const anthropic = new Anthropic({ apiKey: cfg.apiKey });
     let sessionId = body.session_id;
     if (sessionId) {
@@ -86,21 +100,50 @@ Deno.serve(async (req) => {
         environment_id: cfg.environmentId,
         title: "spend-lens: дашборд",
         metadata: { owner: user.id },
+        // Стеля сесії = залишок дня: одна розмова не перевищить денний ліміт
+        // навіть посеред відповіді. Досягнувши її, сесія стає з budget_reached.
+        budget: {
+          type: "limit",
+          max_list_cost: { amount: String(limitCents - spentCents), currency: "USD" },
+        },
       });
       sessionId = s.id;
     }
+    const sid = sessionId;
 
-    // 5. Спершу потік, потім події: так не пропустимо перших відповідей.
+    // Знімок usage кумулятивний, тож у базу йде останній за відрізок,
+    // а функція agent_record_usage додає до дня лише приріст.
+    let lastUsageCents: number | null = null;
+    const recordUsage = async () => {
+      if (lastUsageCents === null) {
+        const s = await anthropic.beta.sessions.retrieve(sid);
+        const amount = s.usage?.list_cost?.amount;
+        if (amount === undefined) return null;
+        lastUsageCents = Number(amount);
+      }
+      const { data, error } = await admin.rpc("agent_record_usage", {
+        p_session: sid,
+        p_owner: user.id,
+        p_cents: lastUsageCents,
+      });
+      return error ? null : Number(data);
+    };
+
+    // 6. Спершу потік, потім події: так не пропустимо перших відповідей.
     const stream = await anthropic.beta.sessions.events.stream(sessionId);
     // deno-lint-ignore no-explicit-any
     await anthropic.beta.sessions.events.send(sessionId, { events: events as any });
 
-    // 6. Пересилання у браузер як SSE до першого idle після роботи агента.
+    // 7. Пересилання у браузер як SSE до першого idle після роботи агента.
     const enc = new TextEncoder();
     const out = new ReadableStream({
       async start(controller) {
-        const emit = (e: unknown) =>
-          controller.enqueue(enc.encode(`data: ${JSON.stringify(e)}\n\n`));
+        // Браузер міг уже закрити зʼєднання: тоді enqueue кидає, а облік має дійти до кінця.
+        const emit = (e: unknown) => {
+          try {
+            controller.enqueue(enc.encode(`data: ${JSON.stringify(e)}\n\n`));
+          } catch { /* потік скасовано */ }
+        };
         const timer = setTimeout(() => stream.controller.abort(), SEGMENT_MS);
         emit({ type: "relay.session", session_id: sessionId });
         let working = false;
@@ -108,6 +151,11 @@ Deno.serve(async (req) => {
           for await (const event of stream) {
             emit(event);
             const t = event.type as string;
+            if (t === "session.usage") {
+              const amount = (event as { usage?: { list_cost?: { amount?: string } | null } })
+                .usage?.list_cost?.amount;
+              if (amount !== undefined) lastUsageCents = Number(amount);
+            }
             if (t === "session.status_running" || t.startsWith("agent.") || t.startsWith("span.")) {
               working = true;
             }
@@ -120,7 +168,13 @@ Deno.serve(async (req) => {
             : { type: "relay.error", message: String(e) });
         } finally {
           clearTimeout(timer);
-          controller.close();
+          try {
+            const spent = await recordUsage();
+            if (spent !== null) emit({ type: "relay.budget", spent_cents: spent, limit_cents: limitCents });
+          } catch { /* облік не має ламати відповідь; наступний знімок наздожене приріст */ }
+          try {
+            controller.close();
+          } catch { /* уже закрито */ }
         }
       },
       cancel() {

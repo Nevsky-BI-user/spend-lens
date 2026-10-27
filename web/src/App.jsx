@@ -20,6 +20,7 @@ import SessionsTab from './components/SessionsTab.jsx';
 import KitTab from './components/KitTab.jsx';
 import FactorsTab from './components/FactorsTab.jsx';
 import ActionsTab from './components/ActionsTab.jsx';
+import AgentChat from './components/AgentChat.jsx';
 import LoginCard from './components/LoginCard.jsx';
 import PrintReport from './print/PrintReport.jsx';
 import { Segmented, ProjectSelect, DayChip, ExportButton, RefreshButton } from './components/ui.jsx';
@@ -515,6 +516,9 @@ function Dashboard() {
         (Pro/Max), це оцінка вартості роботи, а не рахунок до сплати —
         порівнюйте періоди й сесії між собою, а не з сумою в банку.
       </footer>
+      {mode === 'supabase' && (
+        <AgentChat snapshot={snapshot} period={period} project={project} day={day} />
+      )}
     </div>
   );
 }
